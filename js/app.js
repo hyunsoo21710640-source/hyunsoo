@@ -240,6 +240,17 @@ document.getElementById('file-input').addEventListener('change', async (e) => {
 window.addEventListener('DOMContentLoaded', () => {
   render();
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    // updateViaCache:'none' - sw.js 자체를 브라우저 HTTP 캐시로 보지 않고 매번 새로 확인한다.
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((reg) => {
+      reg.update();
+    }).catch(() => {});
+
+    // 새 서비스워커가 활성화되면(=새 버전 배포됨) 화면을 한 번 새로고침해 반영한다.
+    let refreshed = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshed) return;
+      refreshed = true;
+      location.reload();
+    });
   }
 });

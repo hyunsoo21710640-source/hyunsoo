@@ -1,5 +1,6 @@
-// 오프라인에서도 앱이 열리도록 정적 파일을 캐시하는 서비스워커
-const CACHE = 'inspection-notebook-v1';
+// 온라인일 땐 항상 최신 파일을 받아오고(네트워크 우선), 오프라인일 때만 캐시로 대체한다.
+// 캐시 우선 방식은 배포한 새 버전이 있어도 계속 옛 버전을 보여주는 문제가 있어 바꿨다.
+const CACHE = 'inspection-notebook-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -31,13 +32,10 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(e.request).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy));
-        return res;
-      }).catch(() => cached);
-    })
+    fetch(e.request).then((res) => {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(e.request, copy));
+      return res;
+    }).catch(() => caches.match(e.request))
   );
 });
