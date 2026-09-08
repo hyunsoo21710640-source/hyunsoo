@@ -230,12 +230,13 @@ const Views = {
     const site = item.siteId ? await DB.getSite(item.siteId) : null;
     const name = site ? site.name : (item.tempSiteName || '(현장명 없음)');
 
-    const statusBtns = STATUS_LIST.map((s) => `
+    const statusOptions = statusListFor(item.inspectionType);
+    const statusBtns = statusOptions.map((s) => `
       <button data-action="set-status" data-id="${item.id}" data-status="${s}"
         style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:9px 4px;border-radius:11px;
         background:${item.status === s ? `var(--${statusColor(s)}-bg)` : 'var(--bg-soft)'};
         border:1.5px solid ${item.status === s ? `var(--${statusColor(s) === 'blue' ? 'blue-dark' : statusColor(s)})` : 'transparent'};">
-        <span style="font-size:11.5px;font-weight:800;color:${item.status === s ? `var(--${statusColor(s) === 'blue' ? 'blue-dark' : statusColor(s)})` : 'var(--text-soft)'};">${s}</span>
+        <span style="font-size:11px;font-weight:800;white-space:nowrap;color:${item.status === s ? `var(--${statusColor(s) === 'blue' ? 'blue-dark' : statusColor(s)})` : 'var(--text-soft)'};">${s}</span>
       </button>`).join('');
 
     const infoRows = (site ? [
@@ -264,7 +265,7 @@ const Views = {
         </div>
 
         <div style="font-size:11.5px;font-weight:700;color:var(--text-mute);margin-bottom:7px;">점검 상태</div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:16px;">${statusBtns}</div>
+        <div style="display:grid;grid-template-columns:repeat(${statusOptions.length},1fr);gap:6px;margin-bottom:16px;">${statusBtns}</div>
 
         ${infoRows.length ? `
         <div class="card" style="padding:13px 15px;margin-bottom:16px;">

@@ -1,12 +1,23 @@
 // 라우팅과 공통 유틸 - 화면 그리기는 views.js가 담당
 const INSPECTION_TYPES = ['일반', '합동점검', '패트롤', '불시점검', '컨설팅', '사망사고 합동점검'];
-const STATUS_LIST = ['예정', '진행중', '완료', '미실시'];
+
+// 패트롤은 현장에 있는 동안 실시간으로 "진행중"을 쓰고,
+// 그 외 점검은 방문 후 지적사항 조치 여부(조치중/조치완료)를 추적한다.
+const STATUS_LIST_PATROL = ['예정', '진행중', '완료', '미실시'];
+const STATUS_LIST_DEFAULT = ['예정', '완료', '조치중', '조치완료', '미실시'];
+
+function statusListFor(inspectionType) {
+  return inspectionType === '패트롤' ? STATUS_LIST_PATROL : STATUS_LIST_DEFAULT;
+}
 
 const TYPE_COLOR = {
   '일반': 'blue', '합동점검': 'purple', '패트롤': 'teal',
   '불시점검': 'orange', '컨설팅': 'green', '사망사고 합동점검': 'red',
 };
-const STATUS_COLOR = { '예정': 'blue', '진행중': 'orange', '완료': 'green', '미실시': 'red' };
+const STATUS_COLOR = {
+  '예정': 'blue', '진행중': 'orange', '완료': 'green', '미실시': 'red',
+  '조치중': 'orange', '조치완료': 'teal',
+};
 
 function typeColor(t) { return TYPE_COLOR[t] || 'gray'; }
 function statusColor(s) { return STATUS_COLOR[s] || 'gray'; }

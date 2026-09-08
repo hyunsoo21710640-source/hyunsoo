@@ -1,22 +1,62 @@
 // 엑셀 파일을 읽어 현장 마스터/점검계획 데이터로 변환하고, 반대로 일정을 엑셀로 내보내는 기능
 const Excel = (() => {
 
-  function excelSerialToISO(v) {
+  // 조마다 컬럼명이 조금씩 다를 수 있어(점검일자/점검날짜/일자 등) 후보군으로 매칭한다.
+  const FIELD_SYNONYMS = {
+    cwsId: ['CWS공사ID', 'CWSID', 'CWS번호', '공사ID'],
+    inspectionType: ['점검구분', '구분', '점검유형', '점검종류'],
+    inspectionDate: ['점검일자', '점검날짜', '점검일', '방문일자', '실시일자', '일자', '날짜'],
+    team: ['점검조', '담당조', '조'],
+    siteName: ['공사명', '현장명', '사업명', '공사명칭'],
+    address: ['현장소재지', '소재지', '주소', '현장주소'],
+    workType: ['공종'],
+    workDetail: ['세부공종'],
+    contractDate: ['계약일자', '계약일'],
+    startDate: ['금차년도착공년월일', '최초착공년월일', '착공년월일', '착공일자', '착공일'],
+    endDate: ['금차년도준공예정일', '준공예정일', '준공일자', '준공일'],
+    contractAmount: ['도급금액', '계약금액'],
+    contractor: ['시공자', '시공사'],
+    bizNo: ['사업자등록번호(시공자)', '사업자등록번호'],
+    phone: ['전화번호(현장번호)', '전화번호', '현장번호', '연락처'],
+    progressRate: ['공정률', '진행률'],
+  };
+
+  function excelSerialToISO(v, ctx) {
     if (v instanceof Date) {
       return v.toISOString().slice(0, 10);
     }
     if (typeof v === 'number') {
-      // Excel 날짜 일련번호(1899-12-30 기준) -> YYYY-MM-DD
+      // 그럴듯한 엑셀 날짜 일련번호 범위(대략 1990~2100년)만 날짜로 인정한다.
+      if (v < 32874 || v > 73050) return null;
       const ms = Math.round((v - 25569) * 86400 * 1000);
-      const d = new Date(ms);
-      return d.toISOString().slice(0, 10);
+      return new Date(ms).toISOString().slice(0, 10);
     }
     if (typeof v === 'string') {
       const s = v.trim();
-      const m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
-      if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+      // 2026-09-08 / 2026.9.8 / 2026년 9월 8일
+      let m = s.match(/^(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/);
+      if (m) return isoDate(m[1], m[2], m[3]);
+      // 9/8, 09.08, 9월 8일 (연도 없음 - 시트 이름에서 유추한 연도 사용)
+      m = s.match(/^(\d{1,2})\s*[-./월]\s*(\d{1,2})\s*일?\s*$/);
+      if (m && ctx && ctx.year) return isoDate(ctx.year, m[1], m[2]);
     }
     return null;
+  }
+
+  function isoDate(y, mo, d) {
+    y = Number(y); mo = Number(mo); d = Number(d);
+    if (!y || !mo || !d || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    return `${String(y).padStart(4, '0')}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
+  // 시트 이름에서 "9월", "2026년" 같은 힌트를 뽑아 연도 없는 날짜를 보완한다.
+  function sheetDateContext(sheetName) {
+    const y = sheetName.match(/(\d{4})\s*년/);
+    const m = sheetName.match(/(\d{1,2})\s*월/);
+    return {
+      year: y ? Number(y[1]) : new Date().getFullYear(),
+      month: m ? Number(m[1]) : null,
+    };
   }
 
   function pick(row, keys) {
@@ -62,30 +102,69 @@ const Excel = (() => {
     }
   }
 
-  // 실제 현장 엑셀은 헤더 셀에 줄바꿈·공백이 섞여 있는 경우가 많아,
-  // sheet_to_json의 기본 헤더 매칭 대신 공백/개행을 제거한 헤더로 직접 매핑한다.
+  // 헤더 셀에 줄바꿈·공백이 섞여 있는 경우가 많아 공백/개행을 제거해 비교한다.
   function normalizeHeader(h) {
     return h == null ? '' : String(h).replace(/\s+/g, '');
   }
 
   function sheetToObjects(ws) {
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
-    if (!rows.length) return [];
+    if (!rows.length) return { headers: [], rows: [] };
     const headers = rows[0].map(normalizeHeader);
-    return rows.slice(1)
+    const data = rows.slice(1)
       .filter((r) => r.some((v) => v !== null && v !== ''))
       .map((r) => {
         const obj = {};
         headers.forEach((h, i) => { if (h) obj[h] = r[i]; });
         return obj;
       });
+    return { headers, rows: data };
   }
 
-  // 시트를 훑어서 "점검계획(세부일정)" 또는 "현장마스터" 형식인지 판별
-  function classifySheet(headerRow) {
-    const has = (name) => headerRow.includes(name);
-    if (has('CWS공사ID') && has('점검일자') && has('점검구분')) return 'schedule';
-    if (has('CWS공사ID') && has('공사명') && (has('시공자') || has('사업자등록번호(시공자)'))) return 'master';
+  // 헤더 문자열들을 의미별 필드(cwsId, inspectionDate, ...)로 매칭한다.
+  // 정확히 일치하는 후보명을 먼저 찾고, 없으면 포함관계로 느슨하게 찾는다.
+  function resolveFieldMap(headers) {
+    const uniqueHeaders = [...new Set(headers.filter(Boolean))];
+    const claimed = new Set();
+    const map = {};
+
+    for (const [field, syns] of Object.entries(FIELD_SYNONYMS)) {
+      const exact = uniqueHeaders.find((h) => !claimed.has(h) && syns.includes(h));
+      if (exact) { map[field] = exact; claimed.add(exact); }
+    }
+    // 느슨한 포함관계 매칭은 길이가 짧은(2자 이하) 후보명은 쓰지 않는다.
+    // "일자", "구분", "조" 같은 짧은 말은 "총공사계약일자", "발주자구분" 같은
+    // 전혀 다른 컬럼 안에도 우연히 들어있어 오매칭을 일으키기 쉽다.
+    for (const [field, syns] of Object.entries(FIELD_SYNONYMS)) {
+      if (map[field]) continue;
+      let best = null, bestScore = 0;
+      for (const h of uniqueHeaders) {
+        if (claimed.has(h)) continue;
+        for (const syn of syns) {
+          if (syn.length < 3) continue;
+          if (h.includes(syn) || syn.includes(h)) {
+            const score = Math.min(h.length, syn.length);
+            if (score > bestScore) { bestScore = score; best = h; }
+          }
+        }
+      }
+      if (best) { map[field] = best; claimed.add(best); }
+    }
+    return map;
+  }
+
+  // 필드맵을 적용해 원래 헤더 키를 의미있는 필드명으로 바꾼 새 row 객체를 만든다.
+  function remap(row, fieldMap) {
+    const out = {};
+    for (const [field, header] of Object.entries(fieldMap)) {
+      out[field] = row[header];
+    }
+    return out;
+  }
+
+  function classifyByFieldMap(fieldMap) {
+    if (fieldMap.inspectionDate && fieldMap.inspectionType) return 'schedule';
+    if (fieldMap.siteName && (fieldMap.cwsId || fieldMap.contractor)) return 'master';
     return null;
   }
 
@@ -94,58 +173,58 @@ const Excel = (() => {
     workbook.SheetNames.forEach((name) => {
       const ws = workbook.Sheets[name];
       if (!ws) return;
-      const json = sheetToObjects(ws);
-      if (!json.length) return;
-      const headerRow = Object.keys(json[0]);
-      const kind = classifySheet(headerRow);
+      const { headers, rows } = sheetToObjects(ws);
+      if (!rows.length) return;
+      const fieldMap = resolveFieldMap(headers);
+      const kind = classifyByFieldMap(fieldMap);
+      const ctx = sheetDateContext(name);
+      const mapped = rows.map((r) => Object.assign(remap(r, fieldMap), { __ctx: ctx }));
       if (kind === 'schedule') {
-        result.scheduleRows.push(...json);
-        result.sheets.push({ name, kind, rows: json.length });
+        result.scheduleRows.push(...mapped);
+        result.sheets.push({ name, kind, rows: rows.length });
       } else if (kind === 'master') {
-        result.masterRows.push(...json);
-        result.sheets.push({ name, kind, rows: json.length });
+        result.masterRows.push(...mapped);
+        result.sheets.push({ name, kind, rows: rows.length });
       } else {
-        result.sheets.push({ name, kind: null, rows: json.length });
+        result.sheets.push({ name, kind: null, rows: rows.length });
       }
     });
     return result;
   }
 
   function mapMasterRow(row) {
-    const cwsId = pick(row, ['CWS공사ID']);
+    const cwsId = pick(row, ['cwsId']);
     if (!cwsId) return null;
     return {
       cwsId: String(cwsId),
-      name: pick(row, ['공사명']) || '',
-      address: pick(row, ['현장소재지']) || '',
-      contractor: pick(row, ['시공자']) || '',
-      bizNo: pick(row, ['사업자등록번호(시공자)', '사업자등록번호']) || '',
-      workType: pick(row, ['공종']) || '',
-      workDetail: pick(row, ['세부공종']) || '',
-      contractDate: excelSerialToISO(pick(row, ['계약일자'])),
-      startDate: excelSerialToISO(pick(row, ['금차년도착공년월일', '최초착공년월일'])),
-      endDate: excelSerialToISO(pick(row, ['금차년도준공예정일'])),
-      contractAmount: pick(row, ['도급금액']) || null,
-      phone: pick(row, ['전화번호\n(현장번호)', '전화번호(현장번호)', '전화번호']) || '',
+      name: pick(row, ['siteName']) || '',
+      address: pick(row, ['address']) || '',
+      contractor: pick(row, ['contractor']) || '',
+      bizNo: pick(row, ['bizNo']) || '',
+      workType: pick(row, ['workType']) || '',
+      workDetail: pick(row, ['workDetail']) || '',
+      contractDate: excelSerialToISO(pick(row, ['contractDate']), row.__ctx),
+      startDate: excelSerialToISO(pick(row, ['startDate']), row.__ctx),
+      endDate: excelSerialToISO(pick(row, ['endDate']), row.__ctx),
+      contractAmount: pick(row, ['contractAmount']) || null,
+      phone: pick(row, ['phone']) || '',
     };
   }
 
   function mapScheduleRow(row, sourceFile) {
-    const cwsId = pick(row, ['CWS공사ID']);
-    const name = pick(row, ['공사명']) || '';
-    const date = excelSerialToISO(pick(row, ['점검일자']));
+    const cwsId = pick(row, ['cwsId']);
+    const name = pick(row, ['siteName']) || '';
+    const date = excelSerialToISO(pick(row, ['inspectionDate']), row.__ctx);
     if (!date) return null;
-    const progressRaw = pick(row, ['공정률']);
+    const progressRaw = pick(row, ['progressRate']);
     const progressRate = progressRaw != null ? Number(progressRaw) : null;
     return {
       siteId: cwsId ? String(cwsId) : null,
       tempSiteName: cwsId ? null : name,
       date,
       time: null,
-      inspectionType: pick(row, ['점검구분']) || '일반',
-      team: pick(row, ['점검조']) || null,
-      region: pick(row, ['지역']) || null,
-      district: pick(row, ['지역구']) || null,
+      inspectionType: pick(row, ['inspectionType']) || '일반',
+      team: pick(row, ['team']) || null,
       memo: '',
       progressRate: Number.isFinite(progressRate) ? progressRate : null,
       status: '예정',
@@ -155,16 +234,16 @@ const Excel = (() => {
       _siteHint: cwsId ? {
         cwsId: String(cwsId),
         name,
-        address: pick(row, ['현장소재지']) || '',
-        contractor: pick(row, ['시공자']) || '',
-        bizNo: pick(row, ['사업자등록번호']) || '',
-        workType: pick(row, ['공종']) || '',
-        workDetail: pick(row, ['세부공종']) || '',
-        contractDate: excelSerialToISO(pick(row, ['계약일자'])),
-        startDate: excelSerialToISO(pick(row, ['금차년도착공년월일'])),
-        endDate: excelSerialToISO(pick(row, ['금차년도준공예정일'])),
-        contractAmount: pick(row, ['도급금액']) || null,
-        phone: pick(row, ['전화번호\n(현장번호)', '전화번호(현장번호)', '전화번호']) || '',
+        address: pick(row, ['address']) || '',
+        contractor: pick(row, ['contractor']) || '',
+        bizNo: pick(row, ['bizNo']) || '',
+        workType: pick(row, ['workType']) || '',
+        workDetail: pick(row, ['workDetail']) || '',
+        contractDate: excelSerialToISO(pick(row, ['contractDate']), row.__ctx),
+        startDate: excelSerialToISO(pick(row, ['startDate']), row.__ctx),
+        endDate: excelSerialToISO(pick(row, ['endDate']), row.__ctx),
+        contractAmount: pick(row, ['contractAmount']) || null,
+        phone: pick(row, ['phone']) || '',
       } : null,
     };
   }
