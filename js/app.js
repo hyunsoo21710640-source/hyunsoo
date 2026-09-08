@@ -94,12 +94,15 @@ async function render() {
   const main = document.getElementById('main');
   let itemMatch = path.match(/^\/item\/(\d+)$/);
   let editMatch = path.match(/^\/add\/(\d+)$/);
+  let siteMatch = path.match(/^\/site\/(.+)$/);
   if (itemMatch) {
     main.innerHTML = await Views.renderSiteDetail(Number(itemMatch[1]));
   } else if (editMatch) {
     main.innerHTML = await Views.renderAddEdit(Number(editMatch[1]));
+  } else if (siteMatch) {
+    main.innerHTML = await Views.renderSiteInfo(decodeURIComponent(siteMatch[1]));
   } else if (path === '/add') {
-    main.innerHTML = await Views.renderAddEdit();
+    main.innerHTML = await Views.renderAddEdit(undefined, params.get('site') || undefined);
   } else if (routes[path]) {
     main.innerHTML = await routes[path](params);
   } else {

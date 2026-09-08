@@ -97,6 +97,11 @@ const DB = {
     const idx = store.index('date');
     return reqToPromise(idx.getAll(dateStr));
   },
+  async scheduleBySite(cwsId) {
+    const store = await tx('schedule', 'readonly');
+    const idx = store.index('siteId');
+    return reqToPromise(idx.getAll(cwsId));
+  },
   async scheduleInRange(startStr, endStr) {
     const all = await DB.allSchedule();
     return all.filter((it) => it.date >= startStr && it.date <= endStr);

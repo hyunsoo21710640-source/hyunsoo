@@ -186,13 +186,10 @@ const Views = {
       </div>`;
   },
 
-  // ---------- 현장(전체 목록) ----------
+  // ---------- 현장(마스터 전체 목록) ----------
   async renderSites(params) {
     const q = params.get('q') || '';
-    const all = await DB.allSchedule();
-    all.sort((a, b) => b.date.localeCompare(a.date));
-    const named = await Promise.all(all.map(async (it) => ({ it, name: await siteNameOf(it) })));
-    const filtered = q ? named.filter(({ name, it }) => name.includes(q) || it.inspectionType.includes(q)) : named;
+    const sites = await DB.allSites();
 
     const header = `
       <div class="topbar">
@@ -202,25 +199,103 @@ const Views = {
         </div>
         <div style="margin-top:12px;display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:11px;background:var(--bg-soft);">
           ${ICONS.search}
-          <input id="site-q" value="${escapeHtml(q)}" placeholder="현장명 · 점검구분 검색" style="border:none;background:none;outline:none;flex:1;font-size:13px;">
+          <input id="site-q" value="${escapeHtml(q)}" placeholder="현장명 · 주소 · 시공자 검색" style="border:none;background:none;outline:none;flex:1;font-size:13px;">
         </div>
       </div>`;
 
-    if (!filtered.length) {
-      return header + `<div class="empty-state">${ICONS.site}<h3>표시할 일정이 없습니다</h3><p>엑셀을 넣거나 검색어를 바꿔보세요.</p></div>`;
+    if (!sites.length) {
+      return header + `<div class="empty-state">${ICONS.site}<h3>등록된 현장이 없습니다</h3><p>설정 → 엑셀로 넣기에서<br>현장 마스터 엑셀을 올려보세요.</p>
+        <button class="btn-primary" style="padding:0 20px;margin:0 auto;" data-href="/upload">${ICONS.upload} 엑셀로 넣기</button>
+      </div>`;
     }
 
-    return header + `<div style="display:flex;flex-direction:column;gap:8px;">
-      ${filtered.map(({ it, name }) => `
-        <div class="card" data-href="/item/${it.id}" style="padding:12px 14px;cursor:pointer;">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
-            <span class="pill pill-${typeColor(it.inspectionType)}">${escapeHtml(it.inspectionType)}</span>
-            <span class="pill pill-${statusColor(it.status)}">${escapeHtml(it.status)}</span>
-            <span style="margin-left:auto;font-size:11px;color:var(--text-mute);">${it.date}</span>
+    const qn = q.trim().toLowerCase();
+    const filtered = qn
+      ? sites.filter((s) => (s.name || '').toLowerCase().includes(qn) || (s.address || '').toLowerCase().includes(qn) || (s.contractor || '').toLowerCase().includes(qn))
+      : sites;
+    filtered.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
+
+    const scheduleAll = await DB.allSchedule();
+    const countBySite = {};
+    scheduleAll.forEach((it) => { if (it.siteId) countBySite[it.siteId] = (countBySite[it.siteId] || 0) + 1; });
+
+    const shown = filtered.slice(0, 150);
+    const countLine = qn
+      ? `${filtered.length}건 검색됨 (전체 ${sites.length}건)`
+      : `전체 ${sites.length}건${sites.length > shown.length ? ` 중 ${shown.length}건 표시 · 검색해서 좁혀보세요` : ''}`;
+
+    if (!shown.length) {
+      return header + `<div class="empty-state">${ICONS.site}<h3>검색 결과가 없습니다</h3><p>다른 검색어를 입력해보세요.</p></div>`;
+    }
+
+    return header + `
+      <div style="font-size:11.5px;color:var(--text-mute);margin-bottom:10px;">${countLine}</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+      ${shown.map((s) => `
+        <div class="card" data-href="/site/${encodeURIComponent(s.cwsId)}" style="padding:12px 14px;cursor:pointer;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+            <span style="font-size:13.5px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.name || '(이름 없음)')}</span>
+            ${countBySite[s.cwsId] ? `<span class="pill pill-blue" style="flex-shrink:0;">점검 ${countBySite[s.cwsId]}건</span>` : ''}
           </div>
-          <div style="font-size:13.5px;font-weight:700;">${escapeHtml(name)}</div>
+          <div style="font-size:11px;color:var(--text-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.address || '')}</div>
+          <div style="font-size:11px;color:var(--text-soft);">${escapeHtml([s.contractor, s.workType].filter(Boolean).join(' · '))}</div>
         </div>`).join('')}
-    </div>`;
+      </div>`;
+  },
+
+  // ---------- 현장 마스터 정보 (엑셀로 들어온 원 데이터) ----------
+  async renderSiteInfo(cwsId) {
+    const site = await DB.getSite(cwsId);
+    if (!site) return `<div class="empty-state"><h3>현장을 찾을 수 없습니다</h3></div>`;
+    const items = (await DB.scheduleBySite(cwsId)).sort((a, b) => b.date.localeCompare(a.date));
+
+    const infoRows = [
+      ['시공자', site.contractor], ['공종', [site.workType, site.workDetail].filter(Boolean).join(' · ')],
+      ['전화번호', site.phone], ['계약일', site.contractDate],
+      ['착공일', site.startDate], ['준공예정', site.endDate],
+      ['도급금액', site.contractAmount ? Number(site.contractAmount).toLocaleString() + '원' : ''],
+      ['CWS ID', site.cwsId],
+    ].filter(([, v]) => v);
+
+    return `
+      <div class="topbar">
+        <div class="topbar-row">
+          <button class="icon-btn" data-href="back">${ICONS.back}</button>
+          <span style="font-size:14px;font-weight:700;">현장 정보</span>
+        </div>
+      </div>
+      <div>
+        <h1 style="margin:0 0 6px;font-size:19px;font-weight:800;letter-spacing:-.01em;line-height:1.3;">${escapeHtml(site.name || '(이름 없음)')}</h1>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:18px;">
+          <span style="font-size:12.5px;color:var(--text-soft);">${escapeHtml(site.address || '')}</span>
+          ${copyBtn(site.address)}
+        </div>
+
+        <div class="card" style="padding:4px 15px;margin-bottom:18px;">
+          <div style="display:grid;grid-template-columns:70px 1fr;row-gap:9px;align-items:center;padding:10px 0;font-size:12.5px;">
+            ${infoRows.map(([k, v]) => `<span style="color:var(--text-mute);font-weight:600;">${k}</span><span style="font-weight:700;display:flex;align-items:center;gap:6px;">${escapeHtml(v)}${k === '전화번호' ? copyBtn(v) : ''}</span>`).join('')}
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
+          <span style="font-size:13px;font-weight:800;">점검 이력</span>
+          <span class="pill pill-blue">${items.length}건</span>
+        </div>
+
+        ${items.length ? `<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+          ${items.map((it) => `
+            <div class="card" data-href="/item/${it.id}" style="padding:11px 13px;cursor:pointer;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span class="pill pill-${typeColor(it.inspectionType)}">${escapeHtml(it.inspectionType)}</span>
+                <span class="pill pill-${statusColor(it.status)}">${escapeHtml(it.status)}</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--text-mute);">${it.date}</span>
+              </div>
+            </div>`).join('')}
+        </div>` : `<div class="empty-state" style="padding:24px 20px;">
+          <p style="margin:0 0 14px;">아직 이 현장에 대한 점검 일정이 없습니다.</p>
+          <button class="btn-primary" style="padding:0 18px;margin:0 auto;" data-href="/add?site=${encodeURIComponent(site.cwsId)}">${ICONS.plusSmall} 이 현장으로 일정 추가</button>
+        </div>`}
+      </div>`;
   },
 
   // ---------- 현장/일정 상세 ----------
@@ -282,9 +357,10 @@ const Views = {
   },
 
   // ---------- 새 일정 추가 / 수정 ----------
-  async renderAddEdit(id) {
+  async renderAddEdit(id, presetSiteId) {
     const existing = id ? await DB.getSchedule(id) : null;
-    const site = existing && existing.siteId ? await DB.getSite(existing.siteId) : null;
+    let site = existing && existing.siteId ? await DB.getSite(existing.siteId) : null;
+    if (!existing && presetSiteId) site = await DB.getSite(presetSiteId);
     const date = existing ? existing.date : todayStr();
     const siteName = site ? site.name : (existing ? existing.tempSiteName : '') || '';
     const type = existing ? existing.inspectionType : '일반';
@@ -309,7 +385,7 @@ const Views = {
           <div class="field-label">현장</div>
           <input id="f-site-search" type="text" value="${escapeHtml(siteName)}" placeholder="현장명으로 검색"
             class="field-box" style="width:100%;font-weight:600;" autocomplete="off">
-          <input type="hidden" id="f-site-id" value="${existing && existing.siteId ? existing.siteId : ''}">
+          <input type="hidden" id="f-site-id" value="${site ? site.cwsId : ''}">
           <div id="f-site-suggestions" style="margin-top:6px;border-radius:12px;overflow:hidden;"></div>
           <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11.5px;font-weight:700;color:var(--blue);">
             <input type="checkbox" id="f-new-site" ${existing && !existing.siteId ? 'checked' : ''}> 마스터에 없는 새 현장 직접 입력
