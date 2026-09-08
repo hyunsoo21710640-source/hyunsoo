@@ -13,9 +13,12 @@ const ICONS = {
   upload: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15V6a2 2 0 0 0-2-2H9"/><path d="M3 9v9a2 2 0 0 0 2 2h9"/><path d="m3 9 6-6"/></svg>',
   download: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
   plus: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
+  plusSmall: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>',
   copy: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
 };
+
+const ADD_BTN = `<button class="icon-btn" data-href="/add" style="background:var(--blue);box-shadow:0 3px 10px rgba(47,111,237,.3);">${ICONS.plusSmall}</button>`;
 
 function copyBtn(value) {
   if (!value) return '';
@@ -60,7 +63,10 @@ const Views = {
             <div class="topbar-sub">${formatKoreanDate(date)}</div>
             <h1 class="topbar-title">오늘 할 일</h1>
           </div>
-          <button class="icon-btn" style="margin-left:auto" data-href="/calendar">${ICONS.calendar}</button>
+          <div style="margin-left:auto;display:flex;gap:8px;">
+            ${ADD_BTN}
+            <button class="icon-btn" data-href="/calendar">${ICONS.calendar}</button>
+          </div>
         </div>
       </div>`;
 
@@ -152,7 +158,10 @@ const Views = {
       <div class="topbar">
         <div class="topbar-row">
           <h1 class="topbar-title">캘린더</h1>
-          <button class="icon-btn" style="margin-left:auto;" data-href="/calendar?date=${todayStr()}&month=${todayStr().slice(0,7)}">오늘</button>
+          <div style="margin-left:auto;display:flex;gap:8px;">
+            ${ADD_BTN}
+            <button class="icon-btn" style="width:auto;padding:0 12px;font-size:12.5px;font-weight:700;" data-href="/calendar?date=${todayStr()}&month=${todayStr().slice(0,7)}">오늘</button>
+          </div>
         </div>
       </div>
       <div style="display:flex;align-items:center;margin-bottom:8px;">
@@ -189,6 +198,7 @@ const Views = {
       <div class="topbar">
         <div class="topbar-row">
           <h1 class="topbar-title">현장</h1>
+          <div style="margin-left:auto;">${ADD_BTN}</div>
         </div>
         <div style="margin-top:12px;display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border-radius:11px;background:var(--bg-soft);">
           ${ICONS.search}
