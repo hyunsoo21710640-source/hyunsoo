@@ -10,17 +10,34 @@ function statusListFor(inspectionType) {
   return inspectionType === '패트롤' ? STATUS_LIST_PATROL : STATUS_LIST_DEFAULT;
 }
 
+// Claude Design(iOS 26) 목업의 TYPE_COLOR/STATUS_COLOR를 그대로 이식
 const TYPE_COLOR = {
-  '일반': 'blue', '합동점검': 'purple', '패트롤': 'teal',
-  '불시점검': 'orange', '컨설팅': 'green', '사망사고 합동점검': 'red',
+  '일반': { bg: 'rgba(0,136,255,.12)', fg: '#0a5bb8' },
+  '합동점검': { bg: 'rgba(203,48,224,.12)', fg: '#9c1fae' },
+  '패트롤': { bg: 'rgba(0,195,208,.14)', fg: '#00778a' },
+  '불시점검': { bg: 'rgba(255,141,40,.15)', fg: '#a85400' },
+  '컨설팅': { bg: 'rgba(0,200,179,.14)', fg: '#00786b' },
+  '사망사고 합동점검': { bg: 'rgba(255,56,60,.12)', fg: '#c81217' },
 };
 const STATUS_COLOR = {
-  '예정': 'blue', '진행중': 'orange', '완료': 'green', '미실시': 'red',
-  '조치중': 'orange', '조치완료': 'teal',
+  '예정': { bg: 'rgba(0,136,255,.12)', fg: '#0a5bb8' },
+  '진행중': { bg: 'rgba(97,85,245,.14)', fg: '#5b3fc4' },
+  '완료': { bg: 'rgba(52,199,89,.14)', fg: '#1f8a3c' },
+  '조치중': { bg: 'rgba(255,141,40,.15)', fg: '#a85400' },
+  '조치완료': { bg: 'rgba(0,200,179,.14)', fg: '#00786b' },
+  '미실시': { bg: 'rgba(118,118,128,.14)', fg: '#6b6b70' },
 };
+const GRAY_COLOR = { bg: 'var(--bg-soft)', fg: 'var(--text-soft)' };
 
-function typeColor(t) { return TYPE_COLOR[t] || 'gray'; }
-function statusColor(s) { return STATUS_COLOR[s] || 'gray'; }
+function typeColor(t) { return TYPE_COLOR[t] || GRAY_COLOR; }
+function statusColor(s) { return STATUS_COLOR[s] || GRAY_COLOR; }
+
+// 조치중 상태가 15일 넘게 이어지면 "조치 지연"으로 본다 (목업의 규칙을 그대로 따름)
+function overdueDays(item) {
+  if (item.status !== '조치중') return 0;
+  return Math.floor((new Date(todayStr()) - new Date(item.date)) / 86400000);
+}
+function isOverdue(item) { return overdueDays(item) > 15; }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function todayStr() {
@@ -41,6 +58,13 @@ function addDays(dateStr, n) {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + n);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function weekLabel(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const monday = new Date(d); monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+  const f = (x) => `${x.getMonth() + 1}/${x.getDate()}`;
+  return `${f(monday)} ~ ${f(sunday)} 주`;
 }
 function monthRange(year, month) {
   const start = `${year}-${pad2(month + 1)}-01`;
@@ -72,6 +96,7 @@ const routes = {
   '/settings': Views.renderSettings,
   '/upload': Views.renderUpload,
   '/export': Views.renderExport,
+  '/data': Views.renderDataManage,
 };
 
 function currentPath() {
@@ -83,8 +108,10 @@ function currentPath() {
 
 async function render() {
   const { path, params } = currentPath();
+  document.getElementById('sheet-overlay').classList.remove('show');
   document.querySelectorAll('.tab').forEach((el) => el.classList.remove('active'));
-  const tabPath = path === '/upload' || path === '/settings' || path === '/export' ? '/settings' : path;
+  const settingsPaths = ['/upload', '/settings', '/export', '/data'];
+  const tabPath = settingsPaths.includes(path) ? '/settings' : path;
   const tabEl = document.querySelector(`.tab[data-path="${tabPath}"]`);
   if (tabEl) tabEl.classList.add('active');
 
@@ -142,7 +169,38 @@ document.addEventListener('click', async (e) => {
   if (!actionEl) return;
   const action = actionEl.dataset.action;
 
-  if (action === 'copy') {
+  if (action === 'open-add-choice') {
+    document.getElementById('sheet-overlay').classList.add('show');
+  } else if (action === 'close-add-choice') {
+    document.getElementById('sheet-overlay').classList.remove('show');
+  } else if (action === 'add-choice-manual') {
+    document.getElementById('sheet-overlay').classList.remove('show');
+    location.hash = '#/add';
+  } else if (action === 'add-choice-excel') {
+    document.getElementById('sheet-overlay').classList.remove('show');
+    location.hash = '#/upload';
+  } else if (action === 'toggle-data-select') {
+    const id = Number(actionEl.dataset.id);
+    const s = window._dataSelected || (window._dataSelected = new Set());
+    s.has(id) ? s.delete(id) : s.add(id);
+    render();
+  } else if (action === 'cancel-data-select') {
+    window._dataSelected = new Set();
+    render();
+  } else if (action === 'delete-data-item') {
+    if (confirm('이 일정을 삭제할까요?')) {
+      await DB.deleteSchedule(Number(actionEl.dataset.id));
+      render();
+    }
+  } else if (action === 'delete-data-selected') {
+    const sel = [...(window._dataSelected || [])];
+    if (!sel.length) return;
+    if (confirm(`선택한 ${sel.length}건을 삭제할까요?`)) {
+      for (const id of sel) await DB.deleteSchedule(id);
+      window._dataSelected = new Set();
+      render();
+    }
+  } else if (action === 'copy') {
     const value = actionEl.dataset.value || '';
     let copied = false;
     if (navigator.clipboard && navigator.clipboard.writeText) {
