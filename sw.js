@@ -1,6 +1,6 @@
 // 온라인일 땐 항상 최신 파일을 받아오고(네트워크 우선), 오프라인일 때만 캐시로 대체한다.
 // 캐시 우선 방식은 배포한 새 버전이 있어도 계속 옛 버전을 보여주는 문제가 있어 바꿨다.
-const CACHE = 'inspection-notebook-v3';
+const CACHE = 'inspection-notebook-v4';
 const ASSETS = [
   './',
   './index.html',

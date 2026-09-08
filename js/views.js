@@ -95,25 +95,34 @@ const Views = {
       <div class="topbar">
         <div class="topbar-row">
           <div>
-            <div class="topbar-sub">${formatKoreanDate(today)}</div>
-            <h1 class="topbar-title-lg">업무 현황</h1>
+            <div class="topbar-sub brand-label">FIELD NOTES · 점검수첩</div>
+            <h1 class="topbar-title-lg">업무 현황<span class="title-dot">.</span></h1>
           </div>
           <button class="icon-btn" style="margin-left:auto;" data-href="/settings" aria-label="설정">${ICONS.settings}</button>
         </div>
       </div>
 
+      <section class="dashboard-hero">
+        <div class="hero-date">${ICONS.today} ${formatKoreanDate(today)}</div>
+        <h2>안전한 현장,<br>차곡차곡 쌓이는 기록.</h2>
+        <p>오늘도 빈틈없이, 이번 주 점검을 확인하세요.</p>
+        <button class="hero-link" data-href="/calendar">이번 주 일정 보기 ${ICONS.chevronR}</button>
+        <svg class="hero-art" aria-hidden="true" viewBox="0 0 120 150" fill="none"><rect x="24" y="22" width="77" height="109" rx="13" stroke="currentColor" stroke-width="2"/><rect x="43" y="15" width="39" height="15" rx="6" fill="#234d51" stroke="currentColor" stroke-width="2"/><path d="m39 52 4 4 8-9M59 52h26m-46 24 4 4 8-9m8 5h26m-46 24 4 4 8-9m8 5h18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="95" cy="119" r="22" fill="#bde7d5"/><path d="m84 119 7 7 14-15" stroke="#234d51" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </section>
+
+      <div class="section-title summary-heading"><span>한눈에 보는 현황</span><span class="section-caption">오늘 기준</span></div>
       <div class="summary-grid">
         <div class="summary-card" data-href="/calendar" style="cursor:pointer;">
-          <div class="label">7일 안에 예정</div><div class="value" style="color:var(--blue);">${upcoming.length}</div>
+          <div class="label"><span class="metric-icon">${ICONS.today}</span>7일 안에 예정</div><div class="value" style="color:var(--blue);">${upcoming.length}<small>건</small></div>
         </div>
         <div class="summary-card" data-href="/data?kind=all" style="cursor:pointer;">
-          <div class="label">진행·조치 중</div><div class="value" style="color:var(--orange);">${followups.length}</div>
+          <div class="label"><span class="metric-icon">${ICONS.clock}</span>진행·조치 중</div><div class="value" style="color:var(--orange);">${followups.length}<small>건</small></div>
         </div>
         <div class="summary-card" data-href="/data?kind=all&q=${encodeURIComponent('조치중')}" style="cursor:pointer;">
-          <div class="label">조치 지연</div><div class="value" style="color:var(--red);">${delayed.length}</div>
+          <div class="label"><span class="metric-icon">${ICONS.clock}</span>조치 지연</div><div class="value" style="color:var(--red);">${delayed.length}<small>건</small></div>
         </div>
         <div class="summary-card" data-href="/sites" style="cursor:pointer;">
-          <div class="label">등록 현장</div><div class="value">${sites.length}</div>
+          <div class="label"><span class="metric-icon">${ICONS.site}</span>등록 현장</div><div class="value">${sites.length}<small>곳</small></div>
         </div>
       </div>
 
