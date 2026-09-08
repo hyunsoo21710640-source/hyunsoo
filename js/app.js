@@ -110,8 +110,8 @@ async function render() {
   const { path, params } = currentPath();
   document.getElementById('sheet-overlay').classList.remove('show');
   document.querySelectorAll('.tab').forEach((el) => el.classList.remove('active'));
-  const settingsPaths = ['/upload', '/settings', '/export', '/data'];
-  const tabPath = settingsPaths.includes(path) ? '/settings' : path;
+  const dataPaths = ['/upload', '/export', '/data'];
+  const tabPath = dataPaths.includes(path) ? '/data' : path === '/settings' ? '/today' : path;
   const tabEl = document.querySelector(`.tab[data-path="${tabPath}"]`);
   if (tabEl) tabEl.classList.add('active');
 
@@ -122,10 +122,13 @@ async function render() {
   let itemMatch = path.match(/^\/item\/(\d+)$/);
   let editMatch = path.match(/^\/add\/(\d+)$/);
   let siteMatch = path.match(/^\/site\/(.+)$/);
+  let siteEditMatch = path.match(/^\/site-edit\/(.+)$/);
   if (itemMatch) {
     main.innerHTML = await Views.renderSiteDetail(Number(itemMatch[1]));
   } else if (editMatch) {
     main.innerHTML = await Views.renderAddEdit(Number(editMatch[1]));
+  } else if (siteEditMatch) {
+    main.innerHTML = await Views.renderSiteEdit(decodeURIComponent(siteEditMatch[1]));
   } else if (siteMatch) {
     main.innerHTML = await Views.renderSiteInfo(decodeURIComponent(siteMatch[1]));
   } else if (path === '/add') {
@@ -136,6 +139,9 @@ async function render() {
     main.innerHTML = await Views.renderToday();
   }
   main.scrollTop = 0;
+  main.classList.remove('page-anim');
+  void main.offsetWidth; // 리플로우를 강제해 매번 애니메이션이 다시 시작되게 함
+  main.classList.add('page-anim');
   if (Views.afterRender) Views.afterRender(path);
 }
 
@@ -259,6 +265,26 @@ document.addEventListener('click', async (e) => {
       const created = await DB.addSchedule(Object.assign({ source: 'MANUAL', status: '예정' }, payload));
       location.hash = '#/item/' + created.id;
     }
+  } else if (action === 'save-site') {
+    const cwsId = actionEl.dataset.id;
+    const get = (id) => document.getElementById(id).value.trim();
+    const name = get('s-name');
+    if (!name) { toast('현장명을 입력해주세요'); return; }
+    await DB.upsertSite({
+      cwsId,
+      name,
+      address: get('s-address'),
+      contractor: get('s-contractor'),
+      workType: get('s-workType'),
+      workDetail: get('s-workDetail'),
+      phone: get('s-phone'),
+      contractDate: get('s-contractDate') || null,
+      startDate: get('s-startDate') || null,
+      endDate: get('s-endDate') || null,
+      contractAmount: get('s-contractAmount') || null,
+    });
+    toast('저장했습니다');
+    location.hash = '#/site/' + encodeURIComponent(cwsId);
   } else if (action === 'do-export') {
     const start = document.getElementById('exp-start').value;
     const end = document.getElementById('exp-end').value;
@@ -274,6 +300,12 @@ document.addEventListener('input', (e) => {
     clearTimeout(window._siteQDebounce);
     window._siteQDebounce = setTimeout(() => {
       location.hash = '#/sites?q=' + encodeURIComponent(e.target.value);
+    }, 250);
+  } else if (e.target.id === 'data-q') {
+    clearTimeout(window._dataQDebounce);
+    const kind = e.target.dataset.kind || 'excel';
+    window._dataQDebounce = setTimeout(() => {
+      location.hash = `#/data?kind=${kind}&q=${encodeURIComponent(e.target.value)}`;
     }, 250);
   }
 });

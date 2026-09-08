@@ -38,10 +38,18 @@ function reqToPromise(req) {
 
 const DB = {
   // ---- sites ----
-  async upsertSite(site) {
+  async upsertSite(site, options = {}) {
     const store = await tx('sites', 'readwrite');
     const existing = await reqToPromise(store.get(site.cwsId));
-    const merged = Object.assign({}, existing, site, { updatedAt: new Date().toISOString() });
+    const incoming = Object.assign({}, site);
+    if (existing && options.preserveExisting) {
+      Object.keys(incoming).forEach((key) => {
+        if ((incoming[key] === '' || incoming[key] == null) && existing[key] !== '' && existing[key] != null) {
+          incoming[key] = existing[key];
+        }
+      });
+    }
+    const merged = Object.assign({}, existing, incoming, { updatedAt: new Date().toISOString() });
     await reqToPromise(store.put(merged));
     return merged;
   },
@@ -109,7 +117,7 @@ const DB = {
   // 같은 현장 · 같은 날짜 · 같은 점검구분이면 기존 것으로 간주(점검결과 보존), 아니면 새로 추가
   async upsertScheduleFromExcel(item) {
     const all = await DB.allSchedule();
-    const key = (it) => `${it.siteId || it.tempSiteName || ''}__${it.date}__${it.inspectionType}`;
+    const key = (it) => `${it.siteId || it.tempSiteName || ''}__${it.date}__${it.inspectionType}__${it.team || ''}`;
     const found = all.find((it) => it.source === 'EXCEL' && key(it) === key(item));
     if (found) {
       const store = await tx('schedule', 'readwrite');
@@ -119,6 +127,8 @@ const DB = {
         time: item.time || found.time,
         progressRate: item.progressRate ?? found.progressRate,
         sourceFile: item.sourceFile,
+        sourceSheet: item.sourceSheet,
+        sourceRow: item.sourceRow,
         updatedAt: new Date().toISOString(),
       });
       await reqToPromise(store.put(merged));

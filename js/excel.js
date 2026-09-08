@@ -108,17 +108,34 @@ const Excel = (() => {
   }
 
   function sheetToObjects(ws) {
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
-    if (!rows.length) return { headers: [], rows: [] };
-    const headers = rows[0].map(normalizeHeader);
-    const data = rows.slice(1)
-      .filter((r) => r.some((v) => v !== null && v !== ''))
-      .map((r) => {
+    const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+    if (!matrix.length) return { headers: [], rows: [], headerRow: 0 };
+
+    // 보고서 제목·결재란·빈 줄이 위에 있어도 첫 20줄에서 실제 헤더를 찾는다.
+    let headerIndex = 0;
+    let bestScore = -1;
+    for (let i = 0; i < Math.min(20, matrix.length); i++) {
+      const candidate = (matrix[i] || []).map(normalizeHeader);
+      const map = resolveFieldMap(candidate);
+      const kind = classifyByFieldMap(map);
+      const score = Object.keys(map).length + (kind ? 20 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        headerIndex = i;
+      }
+    }
+
+    const headers = (matrix[headerIndex] || []).map(normalizeHeader);
+    const data = matrix.slice(headerIndex + 1)
+      .map((row, offset) => ({ row, excelRow: headerIndex + offset + 2 }))
+      .filter(({ row }) => row.some((v) => v !== null && String(v).trim() !== ''))
+      .map(({ row, excelRow }) => {
         const obj = {};
-        headers.forEach((h, i) => { if (h) obj[h] = r[i]; });
+        headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+        obj.__excelRow = excelRow;
         return obj;
       });
-    return { headers, rows: data };
+    return { headers, rows: data, headerRow: headerIndex + 1 };
   }
 
   // 헤더 문자열들을 의미별 필드(cwsId, inspectionDate, ...)로 매칭한다.
@@ -173,30 +190,53 @@ const Excel = (() => {
     workbook.SheetNames.forEach((name) => {
       const ws = workbook.Sheets[name];
       if (!ws) return;
-      const { headers, rows } = sheetToObjects(ws);
+      const { headers, rows, headerRow } = sheetToObjects(ws);
       if (!rows.length) return;
       const fieldMap = resolveFieldMap(headers);
       const kind = classifyByFieldMap(fieldMap);
       const ctx = sheetDateContext(name);
-      const mapped = rows.map((r) => Object.assign(remap(r, fieldMap), { __ctx: ctx }));
+      const mapped = rows.map((r) => Object.assign(remap(r, fieldMap), {
+        __ctx: ctx,
+        __sheet: name,
+        __excelRow: r.__excelRow,
+      }));
       if (kind === 'schedule') {
         result.scheduleRows.push(...mapped);
-        result.sheets.push({ name, kind, rows: rows.length });
+        result.sheets.push({ name, kind, rows: rows.length, headerRow });
       } else if (kind === 'master') {
         result.masterRows.push(...mapped);
-        result.sheets.push({ name, kind, rows: rows.length });
+        result.sheets.push({ name, kind, rows: rows.length, headerRow });
       } else {
-        result.sheets.push({ name, kind: null, rows: rows.length });
+        result.sheets.push({ name, kind: null, rows: rows.length, headerRow });
       }
     });
     return result;
   }
 
-  function mapMasterRow(row) {
+  function generatedSiteId(row) {
+    const name = String(pick(row, ['siteName']) || '').trim();
+    if (!name) return null;
+    // 일정 시트에는 주소·시공자가 빠지는 경우가 많으므로 현장명만으로 같은 임시 ID를 만든다.
+    const seed = name.replace(/\s+/g, '').toLowerCase();
+    let hash = 2166136261;
+    for (let i = 0; i < seed.length; i++) {
+      hash ^= seed.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `LOCAL-${(hash >>> 0).toString(36).toUpperCase()}`;
+  }
+
+  function siteIdOf(row) {
     const cwsId = pick(row, ['cwsId']);
+    return cwsId ? String(cwsId).trim() : generatedSiteId(row);
+  }
+
+  function mapMasterRow(row) {
+    const cwsId = siteIdOf(row);
     if (!cwsId) return null;
     return {
-      cwsId: String(cwsId),
+      cwsId,
+      generatedId: !pick(row, ['cwsId']),
       name: pick(row, ['siteName']) || '',
       address: pick(row, ['address']) || '',
       contractor: pick(row, ['contractor']) || '',
@@ -212,14 +252,14 @@ const Excel = (() => {
   }
 
   function mapScheduleRow(row, sourceFile) {
-    const cwsId = pick(row, ['cwsId']);
+    const cwsId = siteIdOf(row);
     const name = pick(row, ['siteName']) || '';
     const date = excelSerialToISO(pick(row, ['inspectionDate']), row.__ctx);
     if (!date) return null;
     const progressRaw = pick(row, ['progressRate']);
     const progressRate = progressRaw != null ? Number(progressRaw) : null;
     return {
-      siteId: cwsId ? String(cwsId) : null,
+      siteId: cwsId || null,
       tempSiteName: cwsId ? null : name,
       date,
       time: null,
@@ -230,9 +270,12 @@ const Excel = (() => {
       status: '예정',
       source: 'EXCEL',
       sourceFile,
+      sourceSheet: row.__sheet,
+      sourceRow: row.__excelRow,
       // 마스터에 없는 현장이라도 최소 정보는 함께 들어오므로 site upsert용으로 보관
       _siteHint: cwsId ? {
-        cwsId: String(cwsId),
+        cwsId,
+        generatedId: !pick(row, ['cwsId']),
         name,
         address: pick(row, ['address']) || '',
         contractor: pick(row, ['contractor']) || '',
@@ -255,20 +298,35 @@ const Excel = (() => {
 
     const masterRows = analyzed.masterRows.map(mapMasterRow).filter(Boolean);
     const scheduleRows = analyzed.scheduleRows.map((r) => mapScheduleRow(r, file.name)).filter(Boolean);
+    const masterSkipped = analyzed.masterRows.length - masterRows.length;
+    const scheduleSkipped = analyzed.scheduleRows.length - scheduleRows.length;
+    const ignoredRows = analyzed.sheets
+      .filter((sheet) => !sheet.kind)
+      .reduce((sum, sheet) => sum + sheet.rows, 0);
+    const totalDetectedRows = analyzed.sheets.reduce((sum, sheet) => sum + sheet.rows, 0);
 
     let masterUpserted = 0;
     for (const m of masterRows) {
-      await DB.upsertSite(m);
+      await DB.upsertSite(m, { preserveExisting: true });
       masterUpserted++;
     }
 
     let scheduleNew = 0, scheduleUpdated = 0;
+    const importedItems = [];
     for (const s of scheduleRows) {
-      if (s._siteHint) await DB.upsertSite(s._siteHint);
+      if (s._siteHint) await DB.upsertSite(s._siteHint, { preserveExisting: true });
       const { _siteHint, ...clean } = s;
-      const { isNew } = await DB.upsertScheduleFromExcel(clean);
+      const { record, isNew } = await DB.upsertScheduleFromExcel(clean);
       if (isNew) scheduleNew++; else scheduleUpdated++;
+      importedItems.push({
+        id: record.id,
+        name: (_siteHint && _siteHint.name) || clean.tempSiteName || '',
+        date: record.date,
+        inspectionType: record.inspectionType,
+        isNew,
+      });
     }
+    importedItems.sort((a, b) => a.date.localeCompare(b.date));
 
     return {
       sheets: analyzed.sheets,
@@ -276,6 +334,9 @@ const Excel = (() => {
       scheduleNew,
       scheduleUpdated,
       totalScheduleRows: scheduleRows.length,
+      totalDetectedRows,
+      skippedRows: masterSkipped + scheduleSkipped + ignoredRows,
+      importedItems,
     };
   }
 

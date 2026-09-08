@@ -13,6 +13,8 @@ const ICONS = {
   trash: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>',
   site: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M6 20V10l6-5 6 5v10"/><path d="M10 20v-5h4v5"/></svg>',
   today: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4M3 10h18"/><circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/><rect x="3" y="4" width="18" height="18" rx="2"/></svg>',
+  settings: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.5 1A8 8 0 0 0 15 6.3L14.6 4h-5.2L9 6.3a8 8 0 0 0-1.4.8l-2.5-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .3 0 .7.1 1l-2 1.5 2 3.4 2.5-1a8 8 0 0 0 1.4.8l.4 2.3h5.2l.4-2.3a8 8 0 0 0 1.4-.8l2.5 1 2-3.4-2-1.5c.1-.3.1-.7.1-1Z"/></svg>',
+  database: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>',
 };
 
 const ADD_BTN = `<button class="icon-btn" data-action="open-add-choice" style="background:var(--blue);">${ICONS.plusSmall}</button>`;
@@ -71,8 +73,66 @@ const Views = {
     if (path === '/add' || path.startsWith('/add/')) Views._wireAddEdit();
   },
 
-  // ---------- 오늘 ----------
+  // ---------- 업무 현황 ----------
   async renderToday() {
+    const today = todayStr();
+    const weekEnd = addDays(today, 6);
+    const items = await DB.allSchedule();
+    const sites = await DB.allSites();
+    const upcoming = items.filter((it) => it.date >= today && it.date <= weekEnd && !['완료', '미실시', '조치완료'].includes(it.status));
+    const followups = items.filter((it) => ['진행중', '조치중'].includes(it.status));
+    const delayed = items.filter(isOverdue);
+    const excelItems = items.filter((it) => it.source === 'EXCEL');
+    const latest = excelItems.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0];
+
+    const statusLine = latest
+      ? `<div style="font-size:14px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(latest.sourceFile || '엑셀 파일')}</div>
+         <div style="font-size:12px;color:var(--text-soft);margin-top:3px;">엑셀 일정 ${excelItems.length}건이 저장되어 있습니다</div>`
+      : `<div style="font-size:14px;font-weight:800;">아직 가져온 엑셀이 없습니다</div>
+         <div style="font-size:12px;color:var(--text-soft);margin-top:3px;">파일을 넣으면 저장된 내용을 바로 확인할 수 있습니다</div>`;
+
+    return `
+      <div class="topbar">
+        <div class="topbar-row">
+          <div>
+            <div class="topbar-sub">${formatKoreanDate(today)}</div>
+            <h1 class="topbar-title-lg">업무 현황</h1>
+          </div>
+          <button class="icon-btn" style="margin-left:auto;" data-href="/settings" aria-label="설정">${ICONS.settings}</button>
+        </div>
+      </div>
+
+      <div class="summary-grid">
+        <div class="summary-card" data-href="/calendar" style="cursor:pointer;">
+          <div class="label">7일 안에 예정</div><div class="value" style="color:var(--blue);">${upcoming.length}</div>
+        </div>
+        <div class="summary-card" data-href="/data?kind=all" style="cursor:pointer;">
+          <div class="label">진행·조치 중</div><div class="value" style="color:var(--orange);">${followups.length}</div>
+        </div>
+        <div class="summary-card" data-href="/data?kind=all&q=${encodeURIComponent('조치중')}" style="cursor:pointer;">
+          <div class="label">조치 지연</div><div class="value" style="color:var(--red);">${delayed.length}</div>
+        </div>
+        <div class="summary-card" data-href="/sites" style="cursor:pointer;">
+          <div class="label">등록 현장</div><div class="value">${sites.length}</div>
+        </div>
+      </div>
+
+      <div class="section-title">${ICONS.database}<span>최근 가져온 데이터</span></div>
+      <div class="card" data-href="/data" style="padding:15px;margin-bottom:16px;display:flex;align-items:center;gap:12px;cursor:pointer;">
+        <span style="width:42px;height:42px;border-radius:12px;background:var(--green-bg);color:var(--green);display:flex;align-items:center;justify-content:center;flex-shrink:0;">${ICONS.download}</span>
+        <div style="min-width:0;flex:1;">${statusLine}</div>
+        <span style="font-size:22px;color:var(--text-mute);">›</span>
+      </div>
+
+      <div class="section-title"><span>빠른 작업</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <button class="btn-primary" data-href="/upload">${ICONS.upload} 엑셀 넣기</button>
+        <button class="btn-secondary" style="height:48px;" data-href="/export">${ICONS.download} 내보내기</button>
+      </div>`;
+  },
+
+  // 예전 오늘 일정 화면은 내부 호환용으로 유지한다.
+  async renderTodayAgenda() {
     const date = todayStr();
     const items = (await DB.scheduleByDate(date)).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
     const named = await Promise.all(items.map(async (it) => ({ it, name: await siteNameOf(it) })));
@@ -244,10 +304,13 @@ const Views = {
     const countBySite = {};
     scheduleAll.forEach((it) => { if (it.siteId) countBySite[it.siteId] = (countBySite[it.siteId] || 0) + 1; });
 
-    const shown = filtered.slice(0, 150);
+    const pageSize = 50;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    const page = Math.min(totalPages, Math.max(1, Number(params.get('page')) || 1));
+    const shown = filtered.slice((page - 1) * pageSize, page * pageSize);
     const countLine = qn
       ? `${filtered.length}건 검색됨 (전체 ${sites.length}건)`
-      : `전체 ${sites.length}건${sites.length > shown.length ? ` 중 ${shown.length}건 표시 · 검색해서 좁혀보세요` : ''}`;
+      : `전체 ${sites.length}건 · ${page}/${totalPages}페이지`;
 
     if (!shown.length) {
       return header + `<div class="empty-state">${ICONS.site}<h3>검색 결과가 없습니다</h3><p>다른 검색어를 입력해보세요.</p></div>`;
@@ -271,9 +334,18 @@ const Views = {
         </div>`;
     }));
 
+    const pageQuery = qn ? `&q=${encodeURIComponent(q)}` : '';
+    const pagination = totalPages > 1 ? `
+      <div class="pagination">
+        <div class="page-btn ${page === 1 ? 'disabled' : ''}" data-href="/sites?page=${page - 1}${pageQuery}">${ICONS.chevronL} 이전</div>
+        <span style="font-size:13px;font-weight:700;color:var(--text-soft);">${page} / ${totalPages}</span>
+        <div class="page-btn ${page === totalPages ? 'disabled' : ''}" data-href="/sites?page=${page + 1}${pageQuery}">다음 ${ICONS.chevronR}</div>
+      </div>` : '';
+
     return header + `
       <div style="font-size:12px;color:var(--text-soft);margin:10px 0;">${countLine}</div>
-      <div style="display:flex;flex-direction:column;gap:10px;">${rows.join('')}</div>`;
+      <div style="display:flex;flex-direction:column;gap:10px;">${rows.join('')}</div>
+      ${pagination}`;
   },
 
   // ---------- 현장 마스터 정보 (엑셀로 들어온 원 데이터) ----------
@@ -317,6 +389,7 @@ const Views = {
         <div class="topbar-row">
           <button class="icon-btn" data-href="back">${ICONS.back}</button>
           <span style="font-size:15px;font-weight:700;">현장 상세</span>
+          <button class="icon-btn" style="margin-left:auto;" data-href="/site-edit/${encodeURIComponent(site.cwsId)}">✎</button>
         </div>
       </div>
       <div>
@@ -350,6 +423,36 @@ const Views = {
       </div>`;
   },
 
+  // ---------- 현장 마스터 정보 수정 ----------
+  async renderSiteEdit(cwsId) {
+    const site = await DB.getSite(cwsId);
+    if (!site) return `<div class="empty-state"><h3>현장을 찾을 수 없습니다</h3></div>`;
+    const field = (id, label, value, type = 'text') => `
+      <div class="field-label">${label}</div>
+      <input id="${id}" type="${type}" value="${escapeHtml(value || '')}" class="field-box" style="width:100%;margin-bottom:14px;">`;
+
+    return `
+      <div class="topbar">
+        <div class="topbar-row">
+          <button data-href="back" style="font-size:15px;color:var(--blue);">취소</button>
+          <span style="flex:1;text-align:center;font-size:15px;font-weight:700;margin-left:-40px;">현장 정보 수정</span>
+        </div>
+      </div>
+      <div>
+        ${field('s-name', '현장명', site.name)}
+        ${field('s-address', '주소', site.address)}
+        ${field('s-contractor', '시공자', site.contractor)}
+        ${field('s-workType', '공종', site.workType)}
+        ${field('s-workDetail', '세부공종', site.workDetail)}
+        ${field('s-phone', '전화번호', site.phone)}
+        ${field('s-contractDate', '계약일', site.contractDate, 'date')}
+        ${field('s-startDate', '착공일', site.startDate, 'date')}
+        ${field('s-endDate', '준공예정일', site.endDate, 'date')}
+        ${field('s-contractAmount', '도급금액(원)', site.contractAmount, 'number')}
+        <button class="btn-primary" style="width:100%;margin-top:4px;" data-action="save-site" data-id="${site.cwsId}">저장</button>
+      </div>`;
+  },
+
   // ---------- 현장/일정 상세 ----------
   async renderSiteDetail(id) {
     const item = await DB.getSchedule(id);
@@ -366,8 +469,9 @@ const Views = {
     }).join('');
 
     const infoRows = (site ? [
-      ['시공자', site.contractor], ['공종', [site.workType, site.workDetail].filter(Boolean).join(' · ')],
-      ['전화번호', site.phone], ['준공예정', site.endDate],
+      ['시공자', escapeHtml(site.contractor)], ['공종', escapeHtml([site.workType, site.workDetail].filter(Boolean).join(' · '))],
+      ['전화번호', site.phone ? `${escapeHtml(site.phone)} ${copyLink(site.phone)}` : ''],
+      ['준공예정', escapeHtml(site.endDate)],
     ] : []).filter(([, v]) => v);
 
     return `
@@ -393,7 +497,7 @@ const Views = {
         ${infoRows.length ? `
         <div class="card" style="padding:14px 15px;margin-bottom:14px;">
           <div style="display:grid;grid-template-columns:76px 1fr;row-gap:9px;align-items:center;font-size:12.5px;">
-            ${infoRows.map(([k, v]) => `<span style="color:var(--text-soft);">${k}</span><span style="font-weight:700;">${escapeHtml(v)}</span>`).join('')}
+            ${infoRows.map(([k, v]) => `<span style="color:var(--text-soft);">${k}</span><span style="font-weight:700;display:flex;align-items:center;gap:6px;">${v}</span>`).join('')}
           </div>
         </div>` : ''}
 
@@ -531,8 +635,113 @@ const Views = {
       </div>`;
   },
 
-  // ---------- 저장된 데이터 보기·삭제 ----------
-  async renderDataManage() {
+  // ---------- 가져온 데이터 확인 ----------
+  async renderDataManage(params) {
+    const kind = ['excel', 'all', 'sites'].includes(params.get('kind')) ? params.get('kind') : 'excel';
+    const query = (params.get('q') || '').trim();
+    const qn = query.toLowerCase();
+    const pageSize = 50;
+    const sites = await DB.allSites();
+    const allItems = await DB.allSchedule();
+    const siteMap = new Map(sites.map((s) => [s.cwsId, s]));
+    const excelCount = allItems.filter((it) => it.source === 'EXCEL').length;
+    const sel = window._dataSelected || (window._dataSelected = new Set());
+
+    let records;
+    if (kind === 'sites') {
+      records = sites.filter((s) => !qn || [s.name, s.address, s.contractor, s.cwsId].some((v) => String(v || '').toLowerCase().includes(qn)));
+      records.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
+    } else {
+      records = allItems.filter((it) => kind === 'all' || it.source === 'EXCEL');
+      records = records.filter((it) => {
+        if (!qn) return true;
+        const site = it.siteId ? siteMap.get(it.siteId) : null;
+        const name = site ? site.name : it.tempSiteName;
+        return [name, it.date, it.inspectionType, it.status, it.team, it.sourceFile]
+          .some((v) => String(v || '').toLowerCase().includes(qn));
+      });
+      records.sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
+    }
+
+    const totalPages = Math.max(1, Math.ceil(records.length / pageSize));
+    const page = Math.min(totalPages, Math.max(1, Number(params.get('page')) || 1));
+    const shown = records.slice((page - 1) * pageSize, page * pageSize);
+    const hrefFor = (nextPage) => `/data?kind=${kind}&page=${nextPage}${query ? `&q=${encodeURIComponent(query)}` : ''}`;
+
+    const header = `
+      <div class="topbar">
+        <div class="topbar-row">
+          <h1 class="topbar-title">데이터</h1>
+          <button class="icon-btn" style="margin-left:auto;" data-href="/settings" aria-label="설정">${ICONS.settings}</button>
+        </div>
+      </div>
+      <div class="card" style="padding:14px;margin-bottom:12px;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);text-align:center;">
+          <div><div style="font-size:20px;font-weight:900;">${excelCount}</div><div style="font-size:11.5px;color:var(--text-soft);">엑셀 일정</div></div>
+          <div style="border-left:1px solid var(--border);border-right:1px solid var(--border);"><div style="font-size:20px;font-weight:900;">${allItems.length}</div><div style="font-size:11.5px;color:var(--text-soft);">전체 일정</div></div>
+          <div><div style="font-size:20px;font-weight:900;">${sites.length}</div><div style="font-size:11.5px;color:var(--text-soft);">현장 마스터</div></div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+        <button class="btn-primary" style="height:44px;" data-href="/upload">${ICONS.upload} 엑셀 넣기</button>
+        <button class="btn-secondary" data-href="/export">${ICONS.download} 내보내기</button>
+      </div>
+      <div class="data-tabs">
+        <div class="data-tab ${kind === 'excel' ? 'active' : ''}" data-href="/data?kind=excel">엑셀 일정</div>
+        <div class="data-tab ${kind === 'all' ? 'active' : ''}" data-href="/data?kind=all">전체 일정</div>
+        <div class="data-tab ${kind === 'sites' ? 'active' : ''}" data-href="/data?kind=sites">현장 마스터</div>
+      </div>
+      <input id="data-q" class="data-search" data-kind="${kind}" value="${escapeHtml(query)}" placeholder="${kind === 'sites' ? '현장명·주소·시공자 검색' : '현장명·날짜·상태·파일명 검색'}">
+      <div style="display:flex;align-items:center;margin:10px 2px 9px;">
+        <span style="font-size:13px;font-weight:800;">${query ? '검색 결과' : (kind === 'sites' ? '저장된 현장' : kind === 'all' ? '저장된 전체 일정' : '엑셀로 가져온 일정')}</span>
+        <span style="margin-left:auto;font-size:12px;color:var(--text-soft);">${records.length}건 · ${page}/${totalPages}페이지</span>
+      </div>
+      ${sel.size && kind !== 'sites' ? `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--blue-bg);border-radius:12px;margin-bottom:10px;">
+          <span style="font-size:13px;font-weight:700;">${sel.size}건 선택</span>
+          <span data-action="cancel-data-select" style="font-size:13px;color:var(--text-soft);cursor:pointer;">해제</span>
+          <span data-action="delete-data-selected" style="margin-left:auto;padding:7px 11px;border-radius:9px;background:var(--red);color:#fff;font-size:13px;font-weight:700;cursor:pointer;">삭제</span>
+        </div>` : ''}`;
+
+    let rows = '';
+    if (!shown.length) {
+      rows = `<div class="empty-state" style="padding:42px 20px;"><h3>${query ? '검색 결과가 없습니다' : '저장된 데이터가 없습니다'}</h3><p>${kind === 'excel' ? '엑셀을 넣으면 여기에서 모든 행을 확인할 수 있습니다.' : '데이터를 추가하면 여기에 표시됩니다.'}</p></div>`;
+    } else if (kind === 'sites') {
+      rows = shown.map((s) => `
+        <div class="data-row" data-href="/site/${encodeURIComponent(s.cwsId)}" style="cursor:pointer;">
+          <div style="display:flex;align-items:center;gap:8px;"><span style="font-size:14.5px;font-weight:800;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(s.name || '(이름 없음)')}</span><span style="margin-left:auto;color:var(--text-mute);font-size:20px;">›</span></div>
+          <div style="font-size:12px;color:var(--text-soft);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.contractor || '시공자 없음')} · ${escapeHtml(s.address || '주소 없음')}</div>
+          <div style="font-size:11px;color:var(--text-mute);margin-top:4px;">${escapeHtml(s.cwsId)}</div>
+        </div>`).join('');
+    } else {
+      rows = shown.map((it) => {
+        const site = it.siteId ? siteMap.get(it.siteId) : null;
+        const name = site ? site.name : (it.tempSiteName || '(현장명 없음)');
+        return `
+          <div class="data-row" style="display:flex;align-items:center;gap:10px;">
+            <input type="checkbox" data-action="toggle-data-select" data-id="${it.id}" ${sel.has(it.id) ? 'checked' : ''} style="width:20px;height:20px;flex-shrink:0;">
+            <div data-href="/item/${it.id}" style="min-width:0;flex:1;cursor:pointer;">
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:5px;">${pillHtml(it.inspectionType, typeColor(it.inspectionType))}${pillHtml(it.status, statusColor(it.status))}</div>
+              <div style="font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(name)}</div>
+              <div style="font-size:11.5px;color:var(--text-soft);margin-top:3px;">${it.date}${it.time ? ' · ' + escapeHtml(it.time) : ''}${it.team ? ' · ' + escapeHtml(it.team) : ''}</div>
+              <div style="font-size:11px;color:var(--text-mute);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.source === 'EXCEL' ? [it.sourceFile || '엑셀에서 가져옴', it.sourceSheet, it.sourceRow ? `${it.sourceRow}행` : ''].filter(Boolean).map(escapeHtml).join(' · ') : '직접 입력'}</div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    const pagination = totalPages > 1 ? `
+      <div class="pagination">
+        <div class="page-btn ${page === 1 ? 'disabled' : ''}" data-href="${hrefFor(page - 1)}">${ICONS.chevronL} 이전</div>
+        <span style="font-size:13px;font-weight:700;color:var(--text-soft);">${page} / ${totalPages}</span>
+        <div class="page-btn ${page === totalPages ? 'disabled' : ''}" data-href="${hrefFor(page + 1)}">다음 ${ICONS.chevronR}</div>
+      </div>` : '';
+
+    return header + `<div style="display:flex;flex-direction:column;gap:8px;">${rows}</div>${pagination}`;
+  },
+
+  // 이전 데이터 관리 화면은 내부 호환용으로 유지한다.
+  async renderDataManageLegacy() {
     const sel = window._dataSelected || (window._dataSelected = new Set());
     const list = (await DB.allSchedule()).sort((a, b) => b.date.localeCompare(a.date));
     const sites = await DB.allSites();
@@ -609,20 +818,43 @@ const Views = {
       const r = window._lastImportResult;
       window._lastImportResult = null;
       return `
-        <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/settings">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 넣기</span></div></div>
+        <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/data">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 넣기</span></div></div>
         <div class="card" style="padding:16px;margin-bottom:14px;">
           <div style="font-size:14px;font-weight:800;margin-bottom:10px;">가져오기 결과</div>
           <div style="display:flex;flex-direction:column;gap:8px;font-size:13.5px;">
             <div style="display:flex;"><span style="color:var(--text-soft);">새 일정</span><span style="margin-left:auto;font-weight:700;color:var(--blue);">${r.scheduleNew}건</span></div>
             <div style="display:flex;"><span style="color:var(--text-soft);">기존 갱신</span><span style="margin-left:auto;font-weight:700;">${r.scheduleUpdated}건</span></div>
             <div style="display:flex;"><span style="color:var(--text-soft);">현장 마스터 갱신</span><span style="margin-left:auto;font-weight:700;">${r.masterUpserted}건</span></div>
+            <div style="height:1px;background:var(--border);margin:2px 0;"></div>
+            <div style="display:flex;"><span style="color:var(--text-soft);">인식한 전체 행</span><span style="margin-left:auto;font-weight:700;">${r.totalDetectedRows ?? (r.totalScheduleRows + r.masterUpserted)}건</span></div>
+            <div style="display:flex;"><span style="color:var(--text-soft);">저장하지 못한 행</span><span style="margin-left:auto;font-weight:700;color:${r.skippedRows ? 'var(--red)' : 'var(--green)'};">${r.skippedRows || 0}건</span></div>
           </div>
         </div>
-        <button class="btn-primary" style="width:100%;" data-href="/today">오늘 일정 보기</button>`;
+        ${(r.sheets && r.sheets.length) ? `
+        <div class="card" style="padding:14px;margin-bottom:14px;">
+          <div style="font-size:13px;font-weight:800;margin-bottom:9px;">시트별 인식 결과</div>
+          <div style="display:flex;flex-direction:column;gap:7px;">
+            ${r.sheets.map((s) => `<div style="display:flex;align-items:center;gap:8px;font-size:12px;"><span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(s.name)}</span><span style="color:${s.kind ? 'var(--green)' : 'var(--red)'};font-weight:700;">${s.kind === 'schedule' ? '일정' : s.kind === 'master' ? '현장' : '미인식'} ${s.rows}행</span></div>`).join('')}
+          </div>
+        </div>` : ''}
+        <button class="btn-primary" style="width:100%;margin-bottom:16px;" data-href="/data">저장된 데이터 모두 보기</button>
+        ${(r.importedItems && r.importedItems.length) ? `
+        <div style="font-size:13px;font-weight:800;margin-bottom:8px;">들어온 일정 전체 (${r.importedItems.length}건)</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${r.importedItems.map((it) => `
+            <div class="card" data-href="/item/${it.id}" style="display:flex;align-items:center;gap:10px;padding:11px 13px;cursor:pointer;">
+              ${pillHtml(it.inspectionType, typeColor(it.inspectionType), 'flex-shrink:0;')}
+              <div style="min-width:0;flex:1;">
+                <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(it.name || '(현장명 없음)')}</div>
+                <div style="font-size:11px;color:var(--text-soft);">${it.date}</div>
+              </div>
+              ${it.isNew ? pillHtml('신규', { bg: 'var(--green-bg)', fg: 'var(--green)' }, 'flex-shrink:0;') : pillHtml('갱신', { bg: 'var(--bg-soft)', fg: 'var(--text-soft)' }, 'flex-shrink:0;')}
+            </div>`).join('')}
+        </div>` : ''}`;
     }
 
     return `
-      <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/settings">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 넣기</span></div></div>
+      <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/data">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 넣기</span></div></div>
       <div style="border:1.5px dashed var(--border);border-radius:16px;padding:36px 20px;text-align:center;margin-bottom:20px;">
         <div style="font-size:15px;font-weight:700;margin-bottom:6px;">점검계획 또는 현장 마스터 엑셀 선택</div>
         <div style="font-size:12.5px;color:var(--text-soft);margin-bottom:16px;">.xlsx, .xls 파일을 지원합니다. 파일 하나로 자동 구분해서 처리합니다.</div>
