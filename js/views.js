@@ -33,6 +33,11 @@ function overdueBadge(item) {
   if (!isOverdue(item)) return '';
   return pillHtml(`⚠ 조치 지연 ${overdueDays(item)}일`, { bg: 'var(--red-bg)', fg: 'var(--red)' });
 }
+// 날짜가 없는(예비/준공/미정) 일정을 표시용 문자열로 바꾼다. 원본 사유(dateNote)가 있으면 함께 보여준다.
+function dateLabel(it) {
+  if (it.date) return escapeHtml(it.date);
+  return it.dateNote ? `미배정 · ${escapeHtml(it.dateNote)}` : '미배정';
+}
 function copyLink(value, action = 'copy') {
   if (!value) return '';
   return `<span data-action="${action}" data-value="${escapeHtml(value)}" style="color:var(--blue);font-weight:700;font-size:11.5px;cursor:pointer;">복사</span>`;
@@ -548,7 +553,7 @@ const Views = {
           ${items.map((it) => `
             <div class="card" data-href="/item/${it.id}" style="display:flex;align-items:center;gap:10px;padding:12px 13px;cursor:pointer;">
               ${pillHtml(it.inspectionType, typeColor(it.inspectionType), 'flex-shrink:0;')}
-              <div style="min-width:0;flex:1;font-size:13px;font-weight:700;">${it.date} <span style="color:${statusColor(it.status).fg};">${escapeHtml(it.status)}</span></div>
+              <div style="min-width:0;flex:1;font-size:13px;font-weight:700;">${dateLabel(it)} <span style="color:${statusColor(it.status).fg};">${escapeHtml(it.status)}</span></div>
               ${overdueBadge(it)}
             </div>`).join('')}
         </div>` : `<button class="btn-primary" style="width:100%;" data-href="/add?site=${encodeURIComponent(site.cwsId)}">이 현장으로 일정 추가</button>`}
@@ -773,7 +778,7 @@ const Views = {
 
   // ---------- 가져온 데이터 확인 ----------
   async renderDataManage(params) {
-    const kind = ['excel', 'all', 'sites'].includes(params.get('kind')) ? params.get('kind') : 'excel';
+    const kind = ['excel', 'all', 'sites', 'unscheduled'].includes(params.get('kind')) ? params.get('kind') : 'excel';
     const query = (params.get('q') || '').trim();
     const qn = query.toLowerCase();
     const pageSize = 50;
@@ -781,6 +786,7 @@ const Views = {
     const allItems = await DB.allSchedule();
     const siteMap = new Map(sites.map((s) => [s.cwsId, s]));
     const excelCount = allItems.filter((it) => it.source === 'EXCEL').length;
+    const unscheduledCount = allItems.filter((it) => !it.date).length;
     const sel = window._dataSelected || (window._dataSelected = new Set());
 
     let records;
@@ -788,15 +794,21 @@ const Views = {
       records = sites.filter((s) => !qn || [s.name, s.address, s.contractor, s.cwsId].some((v) => String(v || '').toLowerCase().includes(qn)));
       records.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
     } else {
-      records = allItems.filter((it) => kind === 'all' || it.source === 'EXCEL');
+      records = allItems.filter((it) => kind === 'unscheduled' ? !it.date : (kind === 'all' || it.source === 'EXCEL'));
       records = records.filter((it) => {
         if (!qn) return true;
         const site = it.siteId ? siteMap.get(it.siteId) : null;
         const name = site ? site.name : it.tempSiteName;
-        return [name, it.date, it.inspectionType, it.status, it.team, it.sourceFile]
+        return [name, it.date, it.dateNote, it.inspectionType, it.status, it.team, it.sourceFile]
           .some((v) => String(v || '').toLowerCase().includes(qn));
       });
-      records.sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')));
+      // 날짜 없는 항목은 정렬 방향과 무관하게 항상 맨 뒤로 보낸다.
+      records.sort((a, b) => {
+        if (!a.date && !b.date) return 0;
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return (b.date + (b.time || '')).localeCompare(a.date + (a.time || ''));
+      });
     }
 
     const totalPages = Math.max(1, Math.ceil(records.length / pageSize));
@@ -812,10 +824,11 @@ const Views = {
         </div>
       </div>
       <div class="card" style="padding:14px;margin-bottom:12px;">
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);text-align:center;">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);text-align:center;">
           <div><div style="font-size:20px;font-weight:900;">${excelCount}</div><div style="font-size:11.5px;color:var(--text-soft);">엑셀 일정</div></div>
-          <div style="border-left:1px solid var(--border);border-right:1px solid var(--border);"><div style="font-size:20px;font-weight:900;">${allItems.length}</div><div style="font-size:11.5px;color:var(--text-soft);">전체 일정</div></div>
-          <div><div style="font-size:20px;font-weight:900;">${sites.length}</div><div style="font-size:11.5px;color:var(--text-soft);">현장 마스터</div></div>
+          <div style="border-left:1px solid var(--border);"><div style="font-size:20px;font-weight:900;">${allItems.length}</div><div style="font-size:11.5px;color:var(--text-soft);">전체 일정</div></div>
+          <div style="border-left:1px solid var(--border);"><div style="font-size:20px;font-weight:900;">${sites.length}</div><div style="font-size:11.5px;color:var(--text-soft);">현장 마스터</div></div>
+          <div style="border-left:1px solid var(--border);"><div style="font-size:20px;font-weight:900;color:${unscheduledCount ? 'var(--red)' : 'var(--text)'};">${unscheduledCount}</div><div style="font-size:11.5px;color:var(--text-soft);">미배정</div></div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
@@ -828,12 +841,14 @@ const Views = {
         <div class="data-tab ${kind === 'excel' ? 'active' : ''}" data-href="/data?kind=excel">엑셀 일정</div>
         <div class="data-tab ${kind === 'all' ? 'active' : ''}" data-href="/data?kind=all">전체 일정</div>
         <div class="data-tab ${kind === 'sites' ? 'active' : ''}" data-href="/data?kind=sites">현장 마스터</div>
+        <div class="data-tab ${kind === 'unscheduled' ? 'active' : ''}" data-href="/data?kind=unscheduled">미배정</div>
       </div>
       <input id="data-q" class="data-search" data-kind="${kind}" value="${escapeHtml(query)}" placeholder="${kind === 'sites' ? '현장명·주소·시공자 검색' : '현장명·날짜·상태·파일명 검색'}">
       <div style="display:flex;align-items:center;margin:10px 2px 9px;">
-        <span style="font-size:13px;font-weight:800;">${query ? '검색 결과' : (kind === 'sites' ? '저장된 현장' : kind === 'all' ? '저장된 전체 일정' : '엑셀로 가져온 일정')}</span>
+        <span style="font-size:13px;font-weight:800;">${query ? '검색 결과' : (kind === 'sites' ? '저장된 현장' : kind === 'all' ? '저장된 전체 일정' : kind === 'unscheduled' ? '날짜가 배정되지 않은 일정' : '엑셀로 가져온 일정')}</span>
         <span style="margin-left:auto;font-size:12px;color:var(--text-soft);">${records.length}건 · ${page}/${totalPages}페이지</span>
       </div>
+      ${kind === 'unscheduled' && records.length ? `<div style="font-size:12px;color:var(--text-soft);margin:-3px 2px 10px;line-height:1.5;">엑셀에 날짜가 없거나("예비"/"준공") 비어 있어 스케줄에 못 들어간 항목입니다. 눌러서 날짜를 배정하세요.</div>` : ''}
       ${sel.size && kind !== 'sites' ? `
         <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--blue-bg);border-radius:12px;margin-bottom:10px;">
           <span style="font-size:13px;font-weight:700;">${sel.size}건 선택</span>
@@ -843,7 +858,7 @@ const Views = {
 
     let rows = '';
     if (!shown.length) {
-      rows = `<div class="empty-state" style="padding:42px 20px;"><h3>${query ? '검색 결과가 없습니다' : '저장된 데이터가 없습니다'}</h3><p>${kind === 'excel' ? '엑셀을 넣으면 여기에서 모든 행을 확인할 수 있습니다.' : '데이터를 추가하면 여기에 표시됩니다.'}</p></div>`;
+      rows = `<div class="empty-state" style="padding:42px 20px;"><h3>${query ? '검색 결과가 없습니다' : (kind === 'unscheduled' ? '날짜 미배정 항목이 없습니다' : '저장된 데이터가 없습니다')}</h3><p>${kind === 'excel' ? '엑셀을 넣으면 여기에서 모든 행을 확인할 수 있습니다.' : kind === 'unscheduled' ? '엑셀의 모든 행이 날짜를 가지고 있어요.' : '데이터를 추가하면 여기에 표시됩니다.'}</p></div>`;
     } else if (kind === 'sites') {
       rows = shown.map((s) => `
         <div class="data-row" data-href="/site/${encodeURIComponent(s.cwsId)}" style="cursor:pointer;">
@@ -861,7 +876,7 @@ const Views = {
             <div data-href="/item/${it.id}" style="min-width:0;flex:1;cursor:pointer;">
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:5px;">${pillHtml(it.inspectionType, typeColor(it.inspectionType))}${pillHtml(it.status, statusColor(it.status))}</div>
               <div style="font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(name)}</div>
-              <div style="font-size:11.5px;color:var(--text-soft);margin-top:3px;">${it.date}${it.time ? ' · ' + escapeHtml(it.time) : ''}${it.team ? ' · ' + escapeHtml(it.team) : ''}</div>
+              <div style="font-size:11.5px;color:${it.date ? 'var(--text-soft)' : 'var(--red)'};margin-top:3px;">${dateLabel(it)}${it.time ? ' · ' + escapeHtml(it.time) : ''}${it.team ? ' · ' + escapeHtml(it.team) : ''}</div>
               <div style="font-size:11px;color:var(--text-mute);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.source === 'EXCEL' ? [it.sourceFile || '엑셀에서 가져옴', it.sourceSheet, it.sourceRow ? `${it.sourceRow}행` : ''].filter(Boolean).map(escapeHtml).join(' · ') : '직접 입력'}</div>
             </div>
           </div>`;
@@ -976,19 +991,38 @@ const Views = {
           </div>
         </div>` : ''}
         <button class="btn-primary" style="width:100%;margin-bottom:16px;" data-href="/data">저장된 데이터 모두 보기</button>
-        ${(r.importedItems && r.importedItems.length) ? `
-        <div style="font-size:13px;font-weight:800;margin-bottom:8px;">들어온 일정 전체 (${r.importedItems.length}건)</div>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          ${r.importedItems.map((it) => `
+        ${(() => {
+          const dated = (r.importedItems || []).filter((it) => it.date);
+          const unscheduled = (r.importedItems || []).filter((it) => !it.date);
+          const itemCard = (it) => `
             <div class="card" data-href="/item/${it.id}" style="display:flex;align-items:center;gap:10px;padding:11px 13px;cursor:pointer;">
-              ${pillHtml(it.inspectionType, typeColor(it.inspectionType), 'flex-shrink:0;')}
+              ${pillHtml(it.inspectionType || '일반', typeColor(it.inspectionType), 'flex-shrink:0;')}
               <div style="min-width:0;flex:1;">
                 <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(it.name || '(현장명 없음)')}</div>
-                <div style="font-size:11px;color:var(--text-soft);">${it.date}</div>
+                <div style="font-size:11px;color:${it.date ? 'var(--text-soft)' : 'var(--red)'};">${dateLabel(it)}</div>
               </div>
               ${it.isNew ? pillHtml('신규', { bg: 'var(--green-bg)', fg: 'var(--green)' }, 'flex-shrink:0;') : pillHtml('갱신', { bg: 'var(--bg-soft)', fg: 'var(--text-soft)' }, 'flex-shrink:0;')}
-            </div>`).join('')}
-        </div>` : ''}`;
+            </div>`;
+          return `
+            ${unscheduled.length ? `
+            <div class="card" style="padding:14px;margin-bottom:14px;border:1px solid var(--red-bg);">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <span style="font-size:13.5px;font-weight:800;color:var(--red);">미배정(날짜 없음) ${unscheduled.length}건</span>
+              </div>
+              <div style="font-size:12px;color:var(--text-soft);line-height:1.5;margin-bottom:10px;">엑셀에 점검일자가 비어 있거나 "예비"/"준공" 등으로 적혀 있어 스케줄에 날짜를 넣지 못했습니다. 목록은 저장돼 있으니 나중에 날짜를 배정하면 됩니다.</div>
+              <details>
+                <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--blue);">목록 보기</summary>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+                  ${unscheduled.map(itemCard).join('')}
+                </div>
+              </details>
+            </div>` : ''}
+            ${dated.length ? `
+            <div style="font-size:13px;font-weight:800;margin-bottom:8px;">들어온 일정 (${dated.length}건)</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              ${dated.map(itemCard).join('')}
+            </div>` : ''}`;
+        })()}`;
     }
 
     return `
@@ -1020,7 +1054,7 @@ const Views = {
         <input type="checkbox" id="exp-master" style="width:18px;height:18px;">
         <span style="font-size:13.5px;">현장 마스터 정보 포함</span>
       </label>
-      <div style="font-size:12.5px;color:var(--text-soft);margin-bottom:20px;line-height:1.5;">기본 내보내기 컬럼: 점검일자, 점검구분, 현장명, 상태, 비고</div>
+      <div style="font-size:12.5px;color:var(--text-soft);margin-bottom:20px;line-height:1.5;">기본 내보내기 컬럼: 점검일자, 점검구분, 현장명, 상태, 비고<br>날짜 미배정 항목이 있으면 기간과 무관하게 "미배정" 시트로 함께 담깁니다.</div>
       <button class="btn-primary" style="width:100%;" data-action="do-export">엑셀로 내보내기</button>`;
   },
 };

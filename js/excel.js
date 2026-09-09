@@ -267,14 +267,19 @@ const Excel = (() => {
   function mapScheduleRow(row, sourceFile) {
     const cwsId = siteIdOf(row);
     const name = pick(row, ['siteName']) || '';
-    const date = excelSerialToISO(pick(row, ['inspectionDate']), row.__ctx);
-    if (!date) return null;
+    const rawDate = pick(row, ['inspectionDate']);
+    const date = excelSerialToISO(rawDate, row.__ctx);
+    if (!date && !name && !cwsId) return null; // 완전히 빈 행
+    // 날짜가 "예비"/"준공" 같은 문자열이거나 아예 비어 있으면 스케줄에선 빠지지만,
+    // 행 자체는 버리지 않고 date:null + dateNote(원본 값)로 보존해 "미배정" 목록에서 보이게 한다.
+    const dateNote = !date && rawDate != null && String(rawDate).trim() !== '' ? String(rawDate).trim() : null;
     const progressRaw = pick(row, ['progressRate']);
     const progressRate = progressRaw != null ? Number(progressRaw) : null;
     return {
       siteId: cwsId || null,
       tempSiteName: cwsId ? null : name,
       date,
+      dateNote,
       time: null,
       inspectionType: pick(row, ['inspectionType']) || '일반',
       team: pick(row, ['team']) || null,
@@ -336,11 +341,18 @@ const Excel = (() => {
         id: record.id,
         name: (_siteHint && _siteHint.name) || clean.tempSiteName || '',
         date: record.date,
+        dateNote: record.dateNote,
         inspectionType: record.inspectionType,
         isNew,
       });
     }
-    importedItems.sort((a, b) => a.date.localeCompare(b.date));
+    // 날짜 없는(미배정) 항목은 항상 뒤로 보낸다 - a.date가 null이면 .localeCompare가 없어 그대로 두면 에러남.
+    importedItems.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return a.date.localeCompare(b.date);
+    });
 
     return {
       sheets: analyzed.sheets,
@@ -354,15 +366,65 @@ const Excel = (() => {
     };
   }
 
+  // 상태별 셀 배경색(엑셀 ARGB) - 앱 화면의 반투명 배지 색과 톤을 맞춘 단색 버전.
+  const STATUS_FILL = {
+    '예정': { bg: 'FFDCEEFF', fg: 'FF0A5BB8' },
+    '진행중': { bg: 'FFE7E3FC', fg: 'FF5B3FC4' },
+    '완료': { bg: 'FFDCF3E1', fg: 'FF1F8A3C' },
+    '조치중': { bg: 'FFFFE8D1', fg: 'FFA85400' },
+    '조치완료': { bg: 'FFD9F5F2', fg: 'FF00786B' },
+    '미실시': { bg: 'FFE7E7EA', fg: 'FF6B6B70' },
+  };
+  const BRAND_FILL = 'FF17796F';
+
+  function styleHeaderRow(row) {
+    row.eachCell((cell) => {
+      cell.font = { name: '맑은 고딕', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND_FILL } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    });
+    row.height = 20;
+  }
+
+  function autoWidth(ws, widths) {
+    ws.columns.forEach((col, i) => { col.width = widths[i] || 14; });
+  }
+
+  // 브라우저에는 파일시스템이 없어 Blob + <a download>로 저장 다이얼로그를 띄운다.
+  async function downloadWorkbook(wb, filename) {
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   async function exportRange(startStr, endStr, opts = {}) {
     const items = await DB.scheduleInRange(startStr, endStr);
     items.sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+    const allItems = await DB.allSchedule();
+    const unscheduled = allItems.filter((it) => !it.date && it.source === 'EXCEL');
     const sites = await DB.allSites();
     const siteMap = new Map(sites.map((s) => [s.cwsId, s]));
 
-    const rows = items.map((it) => {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = '점검수첩';
+    wb.created = new Date();
+
+    // ── 시트 1: 점검일정 ──────────────────────────────
+    const mainCols = ['점검일자', '점검구분', '현장명', '상태', '비고'];
+    if (opts.includeMaster) mainCols.push('CWS공사ID', '현장소재지', '시공자', '공종', '도급금액', '준공예정일');
+    const mainWidths = { '점검일자': 12, '점검구분': 12, '현장명': 34, '상태': 11, '비고': 24, 'CWS공사ID': 12, '현장소재지': 28, '시공자': 18, '공종': 10, '도급금액': 14, '준공예정일': 12 };
+
+    const ws1 = wb.addWorksheet('점검일정', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws1.columns = mainCols.map((h) => ({ header: h, key: h, width: mainWidths[h] || 14 }));
+    styleHeaderRow(ws1.getRow(1));
+
+    items.forEach((it) => {
       const site = it.siteId ? siteMap.get(it.siteId) : null;
-      const base = {
+      const rec = {
         '점검일자': it.date,
         '점검구분': it.inspectionType,
         '현장명': site ? site.name : (it.tempSiteName || ''),
@@ -370,7 +432,7 @@ const Excel = (() => {
         '비고': it.memo || '',
       };
       if (opts.includeMaster) {
-        Object.assign(base, {
+        Object.assign(rec, {
           'CWS공사ID': it.siteId || '',
           '현장소재지': site ? site.address : '',
           '시공자': site ? site.contractor : '',
@@ -379,15 +441,40 @@ const Excel = (() => {
           '준공예정일': site ? site.endDate : '',
         });
       }
-      return base;
+      const row = ws1.addRow(rec);
+      row.font = { name: '맑은 고딕', size: 9 };
+      const fill = STATUS_FILL[it.status];
+      if (fill) {
+        const cell = row.getCell('상태');
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill.bg } };
+        cell.font = { name: '맑은 고딕', size: 9, bold: true, color: { argb: fill.fg } };
+        cell.alignment = { horizontal: 'center' };
+      }
     });
 
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, '점검일정');
+    // ── 시트 2: 미배정(날짜 없음) - 선택한 기간과 무관하게 항상 전체를 담는다 ──
+    if (unscheduled.length) {
+      const ws2 = wb.addWorksheet('미배정', { views: [{ state: 'frozen', ySplit: 1 }] });
+      const cols2 = ['공사명', '현장소재지', '시공자', '점검구분', '점검조', '사유'];
+      ws2.columns = cols2.map((h) => ({ header: h, key: h, width: h === '현장소재지' ? 30 : h === '공사명' ? 32 : h === '시공자' ? 18 : 14 }));
+      styleHeaderRow(ws2.getRow(1));
+      unscheduled.forEach((it) => {
+        const site = it.siteId ? siteMap.get(it.siteId) : null;
+        const row = ws2.addRow({
+          '공사명': site ? site.name : (it.tempSiteName || ''),
+          '현장소재지': site ? site.address : '',
+          '시공자': site ? site.contractor : '',
+          '점검구분': it.inspectionType,
+          '점검조': it.team || '',
+          '사유': it.dateNote || '미정',
+        });
+        row.font = { name: '맑은 고딕', size: 9 };
+      });
+    }
+
     const filename = `점검일정_${startStr}_${endStr}.xlsx`;
-    XLSX.writeFile(wb, filename);
-    return { filename, count: rows.length };
+    await downloadWorkbook(wb, filename);
+    return { filename, count: items.length, unscheduledCount: unscheduled.length };
   }
 
   // 회사 현장 등록 양식(건설현장.xlsx)과 같은 컬럼 순서로 저장된 현장 마스터를 내보낸다.

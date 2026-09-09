@@ -312,7 +312,7 @@ document.addEventListener('click', async (e) => {
     const end = document.getElementById('exp-end').value;
     const includeMaster = document.getElementById('exp-master').checked;
     const r = await Excel.exportRange(start, end, { includeMaster });
-    toast(`${r.filename} 저장됨 (${r.count}건)`);
+    toast(`${r.filename} 저장됨 (${r.count}건${r.unscheduledCount ? ` + 미배정 ${r.unscheduledCount}건` : ''})`);
   }
 });
 

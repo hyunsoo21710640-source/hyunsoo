@@ -127,6 +127,7 @@ const DB = {
       const merged = Object.assign({}, found, {
         siteId: item.siteId,
         tempSiteName: item.tempSiteName,
+        dateNote: item.dateNote ?? null,
         time: item.time || found.time,
         progressRate: item.progressRate ?? found.progressRate,
         extra: item.extra || found.extra,
