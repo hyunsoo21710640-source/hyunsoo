@@ -12,7 +12,7 @@ function statusListFor(inspectionType) {
 
 // 엑셀 헤더 중 정식 필드로 매칭되지 않는 나머지 항목(schedule.extra)의 기본 표시 목록.
 // 설정 화면에서 사용자가 체크박스로 바꿀 수 있다.
-const DEFAULT_VISIBLE_EXTRA_FIELDS = ['지역', '발주자', '우선순위', '위험성', '발생가능사고종류'];
+const DEFAULT_VISIBLE_EXTRA_FIELDS = ['지역', '발주자', '우선순위', '위험성', '발생가능사고종류', '안전관리계획서수립대상', '품질'];
 
 // Claude Design(iOS 26) 목업의 TYPE_COLOR/STATUS_COLOR를 그대로 이식
 const TYPE_COLOR = {
