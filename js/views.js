@@ -15,6 +15,10 @@ const ICONS = {
   today: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4M3 10h18"/><circle cx="12" cy="15" r="1.4" fill="currentColor" stroke="none"/><rect x="3" y="4" width="18" height="18" rx="2"/></svg>',
   settings: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.5 1A8 8 0 0 0 15 6.3L14.6 4h-5.2L9 6.3a8 8 0 0 0-1.4.8l-2.5-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .3 0 .7.1 1l-2 1.5 2 3.4 2.5-1a8 8 0 0 0 1.4.8l.4 2.3h5.2l.4-2.3a8 8 0 0 0 1.4-.8l2.5 1 2-3.4-2-1.5c.1-.3.1-.7.1-1Z"/></svg>',
   database: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>',
+  warn: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 2.6 17a1.7 1.7 0 0 0 1.5 2.6h15.8a1.7 1.7 0 0 0 1.5-2.6L13.7 3.9a1.7 1.7 0 0 0-3.4 0Z"/><path d="M12 9v4"/><circle cx="12" cy="16.3" r=".4" fill="currentColor" stroke="none"/></svg>',
+  building: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="10" height="18"/><path d="M14 8h6v13"/><path d="M8 7h.01M8 11h.01M8 15h.01"/></svg>',
+  calendarRange: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2.4"/><path d="M8 2.5v4M16 2.5v4M3 9.5h18"/></svg>',
+  etc: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
 };
 
 const ADD_BTN = `<button class="icon-btn" data-action="open-add-choice" style="background:var(--blue);">${ICONS.plusSmall}</button>`;
@@ -60,6 +64,68 @@ async function extraFieldSettingsHtml() {
     </div>`;
 }
 
+// schedule.extra를 의미별로 묶어 보여주기 위한 그룹 정의.
+// 매핑에 없는 키(회사가 컬럼명을 새로 바꾼 경우)는 자동으로 "기타" 그룹에 떨어지므로
+// 새 엑셀 헤더가 와도 화면이 깨지지 않는다 (범용 bag 정책 유지).
+const EXTRA_GROUPS = [
+  { label: '안전 · 위험', icon: ICONS.warn, color: 'var(--orange)', keys: ['위험성', '발생가능사고종류', '안전관리계획서수립대상', '품질'] },
+  { label: '발주 정보', icon: ICONS.building, color: 'var(--blue-dark)', keys: ['지역', '지역구', '발주자', '발주자명', '인허가기관(담당부서)'] },
+  { label: '담당 · 일정', icon: ICONS.calendarRange, color: 'var(--indigo)', keys: ['조사자', '기존조사자', '우선순위', '유효점검기간', '현장대리인연락처', '시공사대표메일', '공사규모', '빅토리예측공정률', '비고'] },
+];
+const EXTRA_LABEL_OVERRIDE = { '인허가기관(담당부서)': '인허가기관' };
+
+function riskLevel(n) {
+  if (!Number.isFinite(n)) return null;
+  if (n >= 6) return { label: '높음', fg: 'var(--red)', bg: 'var(--red-bg)' };
+  if (n >= 2) return { label: '주의', fg: 'var(--orange)', bg: 'var(--orange-bg)' };
+  return { label: '낮음', fg: 'var(--green)', bg: 'var(--green-bg)' };
+}
+function markKind(raw) {
+  const v = String(raw ?? '').trim();
+  if (['O', 'o', '○', 'Ο'].includes(v)) return 'yes';
+  if (['X', 'x', '×'].includes(v)) return 'no';
+  return null;
+}
+
+// 필드별 값 표시를 담당. 어떤 스타일이든 항상 .extra-field-input 입력창을 반환해
+// app.js의 save-extra가 값을 그대로 수집·저장할 수 있게 한다(편집 가능 유지).
+function extraValueInput(key, rawValue) {
+  if (key === '안전관리계획서수립대상' || key === '품질') {
+    const mark = markKind(rawValue);
+    if (mark) {
+      const yes = mark === 'yes';
+      return `<input type="text" class="extra-field-input" data-field="${escapeHtml(key)}" value="${yes ? 'O' : 'X'}"
+        style="width:22px;height:22px;padding:0;border:none;border-radius:999px;text-align:center;font-size:11px;font-weight:800;background:${yes ? 'var(--green-bg)' : 'var(--red-bg)'};color:${yes ? 'var(--green)' : 'var(--red)'};">`;
+    }
+  }
+  if (key === '위험성') {
+    const n = Number(rawValue);
+    const level = riskLevel(n);
+    const display = Number.isFinite(n) ? n.toFixed(1) : (rawValue ?? '');
+    return `<span style="display:inline-flex;align-items:baseline;gap:5px;">
+      <input type="text" class="extra-field-input" data-field="${escapeHtml(key)}" value="${escapeHtml(display)}"
+        style="width:38px;border:none;background:transparent;padding:0;font-size:14.5px;font-weight:800;color:${level ? level.fg : 'var(--text)'};">${level ? `<span style="font-size:9.5px;font-weight:700;color:${level.fg};background:${level.bg};padding:1px 6px;border-radius:999px;">${level.label}</span>` : ''}</span>`;
+  }
+  if (key === '발생가능사고종류' && rawValue) {
+    return `<input type="text" class="extra-field-input" data-field="${escapeHtml(key)}" value="${escapeHtml(rawValue)}"
+      style="height:22px;padding:0 8px;border:none;border-radius:999px;font-size:11.5px;font-weight:700;background:var(--red-bg);color:var(--red);">`;
+  }
+  if (key === '우선순위') {
+    const n = Number(rawValue);
+    const display = Number.isFinite(n) ? n.toLocaleString('ko-KR') : (rawValue ?? '');
+    return `<input type="text" class="extra-field-input" data-field="${escapeHtml(key)}" value="${escapeHtml(display)}"
+      style="width:100%;border:none;background:transparent;padding:0;font-size:12.5px;font-weight:700;color:var(--text);">`;
+  }
+  return `<input type="text" class="extra-field-input" data-field="${escapeHtml(key)}" value="${escapeHtml(rawValue ?? '')}"
+    style="width:100%;border:none;background:transparent;padding:0;font-size:12.5px;font-weight:700;color:var(--text);">`;
+}
+
+function extraRowsGrid(keys, extra) {
+  return `<div style="display:grid;grid-template-columns:92px 1fr;row-gap:10px;align-items:center;">
+    ${keys.map((k) => `<span style="font-size:12px;color:var(--text-soft);">${escapeHtml(EXTRA_LABEL_OVERRIDE[k] || k)}</span><div>${extraValueInput(k, extra[k])}</div>`).join('')}
+  </div>`;
+}
+
 // 일정 상세에 보여줄 schedule.extra 블록. 기본 표시 항목은 값이 없어도 공란으로 노출하고,
 // 나머지는 <details>(더보기)에 모아 전부 볼 수 있게 한다. 모든 값은 입력창으로 바로 수정 가능.
 async function extraFieldsDetailHtml(item) {
@@ -68,23 +134,35 @@ async function extraFieldsDetailHtml(item) {
   const moreKeys = Object.keys(extra).filter((k) => !visibleFields.includes(k));
   if (!visibleFields.length && !moreKeys.length) return '';
 
-  const fieldRow = (key, value) => `
-    <div style="margin-bottom:10px;">
-      <div style="font-size:11.5px;color:var(--text-soft);margin-bottom:4px;">${escapeHtml(key)}</div>
-      <input type="text" class="field-box extra-field-input" data-field="${escapeHtml(key)}" value="${escapeHtml(value ?? '')}" style="width:100%;">
+  const sections = EXTRA_GROUPS
+    .map((g) => ({ ...g, keys: g.keys.filter((k) => visibleFields.includes(k)) }))
+    .filter((g) => g.keys.length);
+  const groupedKeys = new Set(sections.flatMap((g) => g.keys));
+  const etcKeys = visibleFields.filter((k) => !groupedKeys.has(k));
+  if (etcKeys.length) sections.push({ label: '기타', icon: ICONS.etc, color: 'var(--text-soft)', keys: etcKeys });
+
+  const sectionHtml = (g) => `
+    <div style="padding:14px 16px;">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
+        <span style="display:inline-flex;color:${g.color};">${g.icon}</span>
+        <span style="font-size:11.5px;font-weight:800;color:${g.color};letter-spacing:.01em;">${g.label}</span>
+      </div>
+      ${extraRowsGrid(g.keys, extra)}
     </div>`;
 
   return `
     <div style="font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:7px;">추가 정보</div>
-    <div class="card" style="padding:14px 15px;margin-bottom:14px;">
-      ${visibleFields.map((k) => fieldRow(k, extra[k])).join('')}
+    <div class="card" style="overflow:hidden;margin-bottom:14px;">
+      ${sections.map(sectionHtml).join('<div style="height:1px;background:var(--border-soft);"></div>')}
       ${moreKeys.length ? `
-      <details>
-        <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--blue);margin-bottom:10px;">더보기 (${moreKeys.length})</summary>
-        ${moreKeys.map((k) => fieldRow(k, extra[k])).join('')}
-      </details>` : ''}
-      <button class="btn-secondary" style="width:100%;" data-action="save-extra" data-id="${item.id}">추가 정보 저장</button>
-    </div>`;
+      <div style="padding:${sections.length ? '0' : '14px'} 16px 15px;">
+        <details>
+          <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--blue);margin:${sections.length ? '4' : '0'}px 0 10px;">더보기 (${moreKeys.length})</summary>
+          ${extraRowsGrid(moreKeys, extra)}
+        </details>
+      </div>` : ''}
+    </div>
+    <button class="btn-secondary" style="width:100%;margin-bottom:14px;" data-action="save-extra" data-id="${item.id}">추가 정보 저장</button>`;
 }
 
 function progressPercent(rate) {
