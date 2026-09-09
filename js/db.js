@@ -1,6 +1,6 @@
 // IndexedDB에 현장(Site)과 점검일정(ScheduleItem)을 저장하는 로컬 저장소
 const DB_NAME = 'inspection-notebook';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise = null;
 
@@ -17,6 +17,9 @@ function openDb() {
         const s = db.createObjectStore('schedule', { keyPath: 'id', autoIncrement: true });
         s.createIndex('date', 'date');
         s.createIndex('siteId', 'siteId');
+      }
+      if (!db.objectStoreNames.contains('settings')) {
+        db.createObjectStore('settings', { keyPath: 'key' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -126,6 +129,7 @@ const DB = {
         tempSiteName: item.tempSiteName,
         time: item.time || found.time,
         progressRate: item.progressRate ?? found.progressRate,
+        extra: item.extra || found.extra,
         sourceFile: item.sourceFile,
         sourceSheet: item.sourceSheet,
         sourceRow: item.sourceRow,
@@ -136,6 +140,24 @@ const DB = {
     }
     const created = await DB.addSchedule(item);
     return { record: created, isNew: true };
+  },
+
+  // ---- settings ----
+  async getSetting(key, defaultValue) {
+    const store = await tx('settings', 'readonly');
+    const rec = await reqToPromise(store.get(key));
+    return rec ? rec.value : defaultValue;
+  },
+  async setSetting(key, value) {
+    const store = await tx('settings', 'readwrite');
+    await reqToPromise(store.put({ key, value }));
+  },
+  // 엑셀에서 들어왔지만 정식 필드로 매칭되지 않은 원본 헤더들의 합집합
+  async allExtraFieldKeys() {
+    const all = await DB.allSchedule();
+    const keys = new Set();
+    all.forEach((it) => { if (it.extra) Object.keys(it.extra).forEach((k) => keys.add(k)); });
+    return [...keys];
   },
 
   async clearAll() {

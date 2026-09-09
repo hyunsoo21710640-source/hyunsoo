@@ -10,6 +10,10 @@ function statusListFor(inspectionType) {
   return inspectionType === '패트롤' ? STATUS_LIST_PATROL : STATUS_LIST_DEFAULT;
 }
 
+// 엑셀 헤더 중 정식 필드로 매칭되지 않는 나머지 항목(schedule.extra)의 기본 표시 목록.
+// 설정 화면에서 사용자가 체크박스로 바꿀 수 있다.
+const DEFAULT_VISIBLE_EXTRA_FIELDS = ['지역', '발주자', '우선순위', '위험성', '발생가능사고종류'];
+
 // Claude Design(iOS 26) 목업의 TYPE_COLOR/STATUS_COLOR를 그대로 이식
 const TYPE_COLOR = {
   '일반': { bg: 'rgba(0,136,255,.12)', fg: '#0a5bb8' },
@@ -232,6 +236,21 @@ document.addEventListener('click', async (e) => {
     const memo = document.getElementById('memo-input').value;
     await DB.updateSchedule(Number(actionEl.dataset.id), { memo });
     toast('저장했습니다');
+  } else if (action === 'save-extra') {
+    const id = Number(actionEl.dataset.id);
+    const extra = {};
+    document.querySelectorAll('.extra-field-input').forEach((inp) => {
+      const v = inp.value.trim();
+      if (v) extra[inp.dataset.field] = v;
+    });
+    await DB.updateSchedule(id, { extra });
+    toast('저장했습니다');
+  } else if (action === 'toggle-extra-field') {
+    const field = actionEl.dataset.field;
+    const current = await DB.getSetting('visibleExtraFields', DEFAULT_VISIBLE_EXTRA_FIELDS);
+    const set = new Set(current);
+    if (actionEl.checked) set.add(field); else set.delete(field);
+    await DB.setSetting('visibleExtraFields', [...set]);
   } else if (action === 'delete-item') {
     if (confirm('이 일정을 삭제할까요?')) {
       await DB.deleteSchedule(Number(actionEl.dataset.id));

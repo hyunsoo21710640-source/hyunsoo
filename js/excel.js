@@ -179,6 +179,17 @@ const Excel = (() => {
     return out;
   }
 
+  // FIELD_SYNONYMS에 매칭되지 않은 나머지 헤더/값을 원본 제목 그대로 보존한다.
+  function extractExtra(row, claimedHeaders) {
+    const extra = {};
+    for (const h of Object.keys(row)) {
+      if (h.startsWith('__') || claimedHeaders.has(h)) continue;
+      const v = row[h];
+      if (v !== null && v !== undefined && String(v).trim() !== '') extra[h] = v;
+    }
+    return extra;
+  }
+
   function classifyByFieldMap(fieldMap) {
     if (fieldMap.inspectionDate && fieldMap.inspectionType) return 'schedule';
     if (fieldMap.siteName && (fieldMap.cwsId || fieldMap.contractor)) return 'master';
@@ -194,11 +205,13 @@ const Excel = (() => {
       if (!rows.length) return;
       const fieldMap = resolveFieldMap(headers);
       const kind = classifyByFieldMap(fieldMap);
+      const claimedHeaders = new Set(Object.values(fieldMap));
       const ctx = sheetDateContext(name);
       const mapped = rows.map((r) => Object.assign(remap(r, fieldMap), {
         __ctx: ctx,
         __sheet: name,
         __excelRow: r.__excelRow,
+        __extra: extractExtra(r, claimedHeaders),
       }));
       if (kind === 'schedule') {
         result.scheduleRows.push(...mapped);
@@ -267,6 +280,7 @@ const Excel = (() => {
       team: pick(row, ['team']) || null,
       memo: '',
       progressRate: Number.isFinite(progressRate) ? progressRate : null,
+      extra: row.__extra || {},
       status: '예정',
       source: 'EXCEL',
       sourceFile,

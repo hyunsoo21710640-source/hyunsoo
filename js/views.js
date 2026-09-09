@@ -42,6 +42,51 @@ async function siteNameOf(item) {
   return item.tempSiteName || '(현장명 없음)';
 }
 
+// 엑셀 헤더 중 정식 필드로 매칭되지 않은 나머지 항목(schedule.extra)을
+// 일정 상세에서 기본으로 보여줄지 설정하는 체크박스 목록.
+async function extraFieldSettingsHtml() {
+  const keys = await DB.allExtraFieldKeys();
+  if (!keys.length) return '';
+  keys.sort((a, b) => a.localeCompare(b, 'ko'));
+  const visible = new Set(await DB.getSetting('visibleExtraFields', DEFAULT_VISIBLE_EXTRA_FIELDS));
+  const checkRow = (key) => `<label style="display:flex;align-items:center;gap:10px;padding:11px 15px;cursor:pointer;">
+      <input type="checkbox" data-action="toggle-extra-field" data-field="${escapeHtml(key)}" ${visible.has(key) ? 'checked' : ''} style="width:18px;height:18px;">
+      <span style="font-size:14px;">${escapeHtml(key)}</span>
+    </label>`;
+  return `
+    <div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;margin:0 4px 6px;">일정 상세에 표시할 엑셀 항목</div>
+    <div class="card" style="overflow:hidden;margin-bottom:20px;">
+      ${keys.map(checkRow).join('<div style="height:1px;background:var(--border);margin:0 15px;"></div>')}
+    </div>`;
+}
+
+// 일정 상세에 보여줄 schedule.extra 블록. 기본 표시 항목은 값이 없어도 공란으로 노출하고,
+// 나머지는 <details>(더보기)에 모아 전부 볼 수 있게 한다. 모든 값은 입력창으로 바로 수정 가능.
+async function extraFieldsDetailHtml(item) {
+  const extra = item.extra || {};
+  const visibleFields = await DB.getSetting('visibleExtraFields', DEFAULT_VISIBLE_EXTRA_FIELDS);
+  const moreKeys = Object.keys(extra).filter((k) => !visibleFields.includes(k));
+  if (!visibleFields.length && !moreKeys.length) return '';
+
+  const fieldRow = (key, value) => `
+    <div style="margin-bottom:10px;">
+      <div style="font-size:11.5px;color:var(--text-soft);margin-bottom:4px;">${escapeHtml(key)}</div>
+      <input type="text" class="field-box extra-field-input" data-field="${escapeHtml(key)}" value="${escapeHtml(value ?? '')}" style="width:100%;">
+    </div>`;
+
+  return `
+    <div style="font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:7px;">추가 정보</div>
+    <div class="card" style="padding:14px 15px;margin-bottom:14px;">
+      ${visibleFields.map((k) => fieldRow(k, extra[k])).join('')}
+      ${moreKeys.length ? `
+      <details>
+        <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--blue);margin-bottom:10px;">더보기 (${moreKeys.length})</summary>
+        ${moreKeys.map((k) => fieldRow(k, extra[k])).join('')}
+      </details>` : ''}
+      <button class="btn-secondary" style="width:100%;" data-action="save-extra" data-id="${item.id}">추가 정보 저장</button>
+    </div>`;
+}
+
 function progressPercent(rate) {
   if (rate == null || !Number.isFinite(rate)) return null;
   const p = rate <= 1 ? rate * 100 : rate;
@@ -510,6 +555,8 @@ const Views = {
           </div>
         </div>` : ''}
 
+        ${await extraFieldsDetailHtml(item)}
+
         <div style="font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:7px;">비고</div>
         <textarea id="memo-input" placeholder="점검 중 발견한 사항을 여기에 기록하세요" style="width:100%;min-height:70px;padding:11px 13px;border-radius:12px;background:var(--surface);border:1px solid var(--border);font-size:13px;line-height:1.5;font-family:inherit;resize:vertical;margin-bottom:12px;">${escapeHtml(item.memo || '')}</textarea>
         <button class="btn-primary" style="width:100%;margin-bottom:14px;" data-action="save-memo" data-id="${item.id}">저장</button>
@@ -634,6 +681,8 @@ const Views = {
       <div class="card" style="overflow:hidden;margin-bottom:20px;">
         ${navRow('저장된 데이터 보기·삭제', '/data')}
       </div>
+
+      ${await extraFieldSettingsHtml()}
 
       <div style="font-size:12.5px;color:var(--text-soft);margin:0 4px 20px;line-height:1.5;">모든 데이터는 이 기기(브라우저)에만 저장됩니다. 기기를 바꾸면 데이터가 이전되지 않습니다.</div>
 
