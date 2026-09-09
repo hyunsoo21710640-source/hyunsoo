@@ -401,7 +401,57 @@ const Excel = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function exportRange(startStr, endStr, opts = {}) {
+  // 원본 엑셀 34개 헤더 중 정식 필드로 매칭된 16개(코어) - 항상 이 순서로 내보낸다.
+  const CORE_EXPORT_COLS = [
+    'CWS공사ID', '점검구분', '점검일자', '점검조', '공사명', '현장소재지', '공종', '세부공종',
+    '계약일자', '금차년도착공년월일', '금차년도준공예정일', '도급금액', '시공자', '사업자등록번호',
+    '전화번호(현장번호)', '공정률',
+  ];
+  // 나머지 18개(매칭 안 된 원본 헤더, schedule.extra로 보존됨) - 원본 시트의 등장 순서.
+  // 회사가 새 컬럼을 추가하면 DB.allExtraFieldKeys()에서 자동으로 뒤에 덧붙는다.
+  const KNOWN_EXTRA_ORDER = [
+    '지역', '지역구', '발주자', '빅토리예측공정률', '공사규모', '현장대리인연락처',
+    '인허가기관(담당부서)', '안전관리계획서수립대상', '품질', '시공사대표메일', '비고',
+    '조사자', '기존조사자', '발주자명', '유효점검기간', '우선순위', '위험성', '발생가능사고종류',
+  ];
+  const EXPORT_WIDTHS = {
+    'CWS공사ID': 12, '점검구분': 11, '점검일자': 13, '점검조': 10, '공사명': 34, '현장소재지': 28,
+    '공종': 10, '세부공종': 14, '계약일자': 12, '금차년도착공년월일': 13, '금차년도준공예정일': 13,
+    '도급금액': 14, '시공자': 18, '사업자등록번호': 15, '전화번호(현장번호)': 15, '공정률': 9,
+    '지역': 10, '지역구': 10, '발주자': 9, '빅토리예측공정률': 13, '공사규모': 22, '현장대리인연락처': 20,
+    '인허가기관(담당부서)': 20, '안전관리계획서수립대상': 12, '품질': 8, '시공사대표메일': 22, '비고': 22,
+    '조사자': 10, '기존조사자': 10, '발주자명': 20, '유효점검기간': 20, '우선순위': 10, '위험성': 10,
+    '발생가능사고종류': 14, '상태': 11, '점검 메모': 24,
+  };
+
+  // schedule 한 건 + 매칭된 site를 원본 컬럼 그대로 한 행으로 펼친다. 없는 값은 공란.
+  function fullExportRow(it, site) {
+    const extra = it.extra || {};
+    const rec = {
+      'CWS공사ID': it.siteId || '',
+      '점검구분': it.inspectionType || '',
+      '점검일자': it.date || (it.dateNote ? `미배정(${it.dateNote})` : ''),
+      '점검조': it.team || '',
+      '공사명': site ? site.name : (it.tempSiteName || ''),
+      '현장소재지': site ? site.address : '',
+      '공종': site ? site.workType : '',
+      '세부공종': site ? site.workDetail : '',
+      '계약일자': site ? site.contractDate : '',
+      '금차년도착공년월일': site ? site.startDate : '',
+      '금차년도준공예정일': site ? site.endDate : '',
+      '도급금액': site ? site.contractAmount : '',
+      '시공자': site ? site.contractor : '',
+      '사업자등록번호': site ? site.bizNo : '',
+      '전화번호(현장번호)': site ? site.phone : '',
+      '공정률': it.progressRate != null ? `${Math.round(it.progressRate * 100)}%` : '',
+      '상태': it.status || '',
+      '점검 메모': it.memo || '',
+    };
+    Object.keys(extra).forEach((k) => { rec[k] = extra[k] ?? ''; });
+    return rec;
+  }
+
+  async function exportRange(startStr, endStr) {
     const items = await DB.scheduleInRange(startStr, endStr);
     items.sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
     const allItems = await DB.allSchedule();
@@ -409,68 +459,39 @@ const Excel = (() => {
     const sites = await DB.allSites();
     const siteMap = new Map(sites.map((s) => [s.cwsId, s]));
 
+    // 지금까지 들어온 엑셀의 모든 extra 헤더(회사가 새로 추가한 컬럼 포함)를 합쳐 컬럼을 구성한다.
+    const seenExtraKeys = await DB.allExtraFieldKeys();
+    const extraCols = [...KNOWN_EXTRA_ORDER, ...seenExtraKeys.filter((k) => !KNOWN_EXTRA_ORDER.includes(k))];
+    const allCols = [...CORE_EXPORT_COLS, ...extraCols, '상태', '점검 메모'];
+
     const wb = new ExcelJS.Workbook();
     wb.creator = '점검수첩';
     wb.created = new Date();
 
-    // ── 시트 1: 점검일정 ──────────────────────────────
-    const mainCols = ['점검일자', '점검구분', '현장명', '상태', '비고'];
-    if (opts.includeMaster) mainCols.push('CWS공사ID', '현장소재지', '시공자', '공종', '도급금액', '준공예정일');
-    const mainWidths = { '점검일자': 12, '점검구분': 12, '현장명': 34, '상태': 11, '비고': 24, 'CWS공사ID': 12, '현장소재지': 28, '시공자': 18, '공종': 10, '도급금액': 14, '준공예정일': 12 };
+    const addSheet = (name, rowsData) => {
+      const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+      ws.columns = allCols.map((h) => ({ header: h, key: h, width: EXPORT_WIDTHS[h] || 14 }));
+      styleHeaderRow(ws.getRow(1));
+      rowsData.forEach((it) => {
+        const site = it.siteId ? siteMap.get(it.siteId) : null;
+        const row = ws.addRow(fullExportRow(it, site));
+        row.font = { name: '맑은 고딕', size: 9 };
+        const fill = STATUS_FILL[it.status];
+        if (fill) {
+          const cell = row.getCell('상태');
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill.bg } };
+          cell.font = { name: '맑은 고딕', size: 9, bold: true, color: { argb: fill.fg } };
+          cell.alignment = { horizontal: 'center' };
+        }
+      });
+      return ws;
+    };
 
-    const ws1 = wb.addWorksheet('점검일정', { views: [{ state: 'frozen', ySplit: 1 }] });
-    ws1.columns = mainCols.map((h) => ({ header: h, key: h, width: mainWidths[h] || 14 }));
-    styleHeaderRow(ws1.getRow(1));
-
-    items.forEach((it) => {
-      const site = it.siteId ? siteMap.get(it.siteId) : null;
-      const rec = {
-        '점검일자': it.date,
-        '점검구분': it.inspectionType,
-        '현장명': site ? site.name : (it.tempSiteName || ''),
-        '상태': it.status,
-        '비고': it.memo || '',
-      };
-      if (opts.includeMaster) {
-        Object.assign(rec, {
-          'CWS공사ID': it.siteId || '',
-          '현장소재지': site ? site.address : '',
-          '시공자': site ? site.contractor : '',
-          '공종': site ? site.workType : '',
-          '도급금액': site ? site.contractAmount : '',
-          '준공예정일': site ? site.endDate : '',
-        });
-      }
-      const row = ws1.addRow(rec);
-      row.font = { name: '맑은 고딕', size: 9 };
-      const fill = STATUS_FILL[it.status];
-      if (fill) {
-        const cell = row.getCell('상태');
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill.bg } };
-        cell.font = { name: '맑은 고딕', size: 9, bold: true, color: { argb: fill.fg } };
-        cell.alignment = { horizontal: 'center' };
-      }
-    });
+    // ── 시트 1: 점검일정 (선택한 기간) ──────────────────────────────
+    addSheet('점검일정', items);
 
     // ── 시트 2: 미배정(날짜 없음) - 선택한 기간과 무관하게 항상 전체를 담는다 ──
-    if (unscheduled.length) {
-      const ws2 = wb.addWorksheet('미배정', { views: [{ state: 'frozen', ySplit: 1 }] });
-      const cols2 = ['공사명', '현장소재지', '시공자', '점검구분', '점검조', '사유'];
-      ws2.columns = cols2.map((h) => ({ header: h, key: h, width: h === '현장소재지' ? 30 : h === '공사명' ? 32 : h === '시공자' ? 18 : 14 }));
-      styleHeaderRow(ws2.getRow(1));
-      unscheduled.forEach((it) => {
-        const site = it.siteId ? siteMap.get(it.siteId) : null;
-        const row = ws2.addRow({
-          '공사명': site ? site.name : (it.tempSiteName || ''),
-          '현장소재지': site ? site.address : '',
-          '시공자': site ? site.contractor : '',
-          '점검구분': it.inspectionType,
-          '점검조': it.team || '',
-          '사유': it.dateNote || '미정',
-        });
-        row.font = { name: '맑은 고딕', size: 9 };
-      });
-    }
+    if (unscheduled.length) addSheet('미배정', unscheduled);
 
     const filename = `점검일정_${startStr}_${endStr}.xlsx`;
     await downloadWorkbook(wb, filename);

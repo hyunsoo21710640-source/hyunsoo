@@ -310,8 +310,7 @@ document.addEventListener('click', async (e) => {
   } else if (action === 'do-export') {
     const start = document.getElementById('exp-start').value;
     const end = document.getElementById('exp-end').value;
-    const includeMaster = document.getElementById('exp-master').checked;
-    const r = await Excel.exportRange(start, end, { includeMaster });
+    const r = await Excel.exportRange(start, end);
     toast(`${r.filename} 저장됨 (${r.count}건${r.unscheduledCount ? ` + 미배정 ${r.unscheduledCount}건` : ''})`);
   }
 });

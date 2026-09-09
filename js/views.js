@@ -1050,11 +1050,7 @@ const Views = {
         <span style="color:var(--text-soft);">~</span>
         <input id="exp-end" type="date" value="${wkEnd}" class="field-box" style="flex:1;font-size:13px;">
       </div>
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:20px;cursor:pointer;">
-        <input type="checkbox" id="exp-master" style="width:18px;height:18px;">
-        <span style="font-size:13.5px;">현장 마스터 정보 포함</span>
-      </label>
-      <div style="font-size:12.5px;color:var(--text-soft);margin-bottom:20px;line-height:1.5;">기본 내보내기 컬럼: 점검일자, 점검구분, 현장명, 상태, 비고<br>날짜 미배정 항목이 있으면 기간과 무관하게 "미배정" 시트로 함께 담깁니다.</div>
+      <div style="font-size:12.5px;color:var(--text-soft);margin-bottom:20px;line-height:1.5;">엑셀에 있던 컬럼(현장 정보·엑셀 원본 항목 전부)과 앱의 상태·메모까지 모두 담깁니다. 값이 없는 칸은 공란으로 비웁니다.<br>날짜 미배정 항목이 있으면 기간과 무관하게 "미배정" 시트로 함께 담깁니다.</div>
       <button class="btn-primary" style="width:100%;" data-action="do-export">엑셀로 내보내기</button>`;
   },
 };
