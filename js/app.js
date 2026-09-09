@@ -304,6 +304,9 @@ document.addEventListener('click', async (e) => {
     });
     toast('저장했습니다');
     location.hash = '#/site/' + encodeURIComponent(cwsId);
+  } else if (action === 'export-sites') {
+    const r = await Excel.exportSitesTemplate();
+    toast(`${r.filename} 저장됨 (${r.count}건)`);
   } else if (action === 'do-export') {
     const start = document.getElementById('exp-start').value;
     const end = document.getElementById('exp-end').value;

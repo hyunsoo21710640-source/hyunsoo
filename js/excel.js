@@ -390,5 +390,46 @@ const Excel = (() => {
     return { filename, count: rows.length };
   }
 
-  return { importFile, exportRange };
+  // 회사 현장 등록 양식(건설현장.xlsx)과 같은 컬럼 순서로 저장된 현장 마스터를 내보낸다.
+  // 이 양식에만 있고 우리 데이터모델엔 없는 항목(법인등록번호, 총공사계약일자, 발주자 관련 등)은 공란으로 둔다.
+  async function exportSitesTemplate() {
+    const sites = await DB.allSites();
+    sites.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
+
+    const rows = sites.map((s) => ({
+      'CWS공사ID': s.cwsId || '',
+      '시공자': s.contractor || '',
+      '사업자등록번호(시공자)': s.bizNo || '',
+      '법인등록번호(시공자)': '',
+      '공사명': s.name || '',
+      '현장소재지': s.address || '',
+      '공종': s.workType || '',
+      '세부공종': s.workDetail || '',
+      '계약일자': s.contractDate || '',
+      '금차년도착공년월일': s.startDate || '',
+      '금차년도준공예정일': s.endDate || '',
+      '도급금액': s.contractAmount || '',
+      '총공사계약일자': '',
+      '최초착공년월일': '',
+      '최초준공예정일': '',
+      '총공사금액': '',
+      '발주자구분': '',
+      '발주자명': '',
+      '사업자등록번호(발주자)': '',
+      '법인등록번호(발주자)': '',
+      '업종': '',
+      '사고발생 여부(시공자)': '',
+      '사고발생 여부(발주자)': '',
+      '전화번호(현장번호)': s.phone || '',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '현장마스터');
+    const filename = `현장마스터_${todayStr()}.xlsx`;
+    XLSX.writeFile(wb, filename);
+    return { filename, count: rows.length };
+  }
+
+  return { importFile, exportRange, exportSitesTemplate };
 })();

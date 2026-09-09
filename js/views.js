@@ -742,7 +742,9 @@ const Views = {
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
         <button class="btn-primary" style="height:44px;" data-href="/upload">${ICONS.upload} 엑셀 넣기</button>
-        <button class="btn-secondary" data-href="/export">${ICONS.download} 내보내기</button>
+        ${kind === 'sites'
+          ? `<button class="btn-secondary" data-action="export-sites">${ICONS.download} 현장 내보내기</button>`
+          : `<button class="btn-secondary" data-href="/export">${ICONS.download} 내보내기</button>`}
       </div>
       <div class="data-tabs">
         <div class="data-tab ${kind === 'excel' ? 'active' : ''}" data-href="/data?kind=excel">엑셀 일정</div>
