@@ -62,6 +62,32 @@ async function teamChipsHtml(activeTeam, monthItems) {
     <div class="team-chip-row">${chip('전체', '', '#17796f')}${teams.map((t) => chip(t, t, hueForTeam(t))).join('')}</div>`;
 }
 
+// 현장 탭의 기간 필터. 빠른 선택(전체/이번 주/이번 달) + 직접 입력.
+function periodFilterHtml(start, end, q) {
+  const today = todayStr();
+  const wkStart = startOfWeek(today);
+  const wkEnd = addDays(wkStart, 6);
+  const mr = monthRange(new Date().getFullYear(), new Date().getMonth());
+  const qParam = q ? `&q=${encodeURIComponent(q)}` : '';
+  const isAll = !start && !end;
+  const isWeek = start === wkStart && end === wkEnd;
+  const isMonth = start === mr.start && end === mr.end;
+  const chip = (label, href, active) => `<div class="chip ${active ? 'selected' : ''}" data-href="${href}" style="flex-shrink:0;">${label}</div>`;
+  return `
+    <div class="field-label" style="margin-bottom:8px;">기간 필터</div>
+    <div style="display:flex;gap:8px;overflow-x:auto;margin-bottom:8px;padding-bottom:2px;">
+      ${chip('전체 기간', `/sites?${qParam.replace(/^&/, '')}`, isAll)}
+      ${chip('이번 주', `/sites?start=${wkStart}&end=${wkEnd}${qParam}`, isWeek)}
+      ${chip('이번 달', `/sites?start=${mr.start}&end=${mr.end}${qParam}`, isMonth)}
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+      <input id="sites-start" type="date" value="${start}" class="field-box" style="flex:1;min-width:0;font-size:12.5px;padding:0 8px;">
+      <span style="color:var(--text-soft);flex-shrink:0;">~</span>
+      <input id="sites-end" type="date" value="${end}" class="field-box" style="flex:1;min-width:0;font-size:12.5px;padding:0 8px;">
+    </div>
+    <button class="btn-secondary" data-action="apply-sites-period" style="width:100%;height:38px;margin-bottom:14px;">기간 적용</button>`;
+}
+
 // 점검조 필터가 걸려 있을 때 다른 화면에서 조용히 줄어든 건수를 알아채도록 보여주는 배지. 탭하면 해제.
 function teamFilterBadge(activeTeam) {
   if (!activeTeam) return '';
@@ -444,7 +470,17 @@ const Views = {
   // ---------- 현장(마스터 전체 목록) ----------
   async renderSites(params) {
     const q = params.get('q') || '';
+    const activeTeam = await DB.getSetting('activeTeam', null);
+    const periodStart = params.get('start') || '';
+    const periodEnd = params.get('end') || '';
+    const hasPeriod = !!(periodStart && periodEnd);
+    const filterActive = hasPeriod || !!activeTeam;
+
     const sites = await DB.allSites();
+
+    const scopeSchedule = hasPeriod ? await DB.scheduleInRange(periodStart, periodEnd) : await DB.allSchedule();
+    const scopedSchedule = filterByTeam(scopeSchedule, activeTeam);
+    const matchingSiteIds = new Set(scopedSchedule.filter((it) => it.siteId).map((it) => it.siteId));
 
     const header = `
       <div class="topbar">
@@ -453,7 +489,9 @@ const Views = {
           <div style="margin-left:auto;">${ADD_BTN}</div>
         </div>
         <input id="site-q" value="${escapeHtml(q)}" placeholder="현장명·주소·시공자로 검색" style="margin-top:10px;width:100%;height:38px;border-radius:10px;border:none;background:var(--bg-soft);padding:0 12px;font-size:14px;color:var(--text);outline:none;">
-      </div>`;
+      </div>
+      ${await teamChipsHtml(activeTeam, scopeSchedule)}
+      ${periodFilterHtml(periodStart, periodEnd, q)}`;
 
     if (!sites.length) {
       return header + `<div class="empty-state">${ICONS.site}<h3>등록된 현장이 없습니다</h3><p>설정 → 엑셀로 넣기에서<br>현장 마스터 엑셀을 올려보세요.</p>
@@ -462,25 +500,25 @@ const Views = {
     }
 
     const qn = q.trim().toLowerCase();
-    const filtered = qn
+    let filtered = qn
       ? sites.filter((s) => (s.name || '').toLowerCase().includes(qn) || (s.address || '').toLowerCase().includes(qn) || (s.contractor || '').toLowerCase().includes(qn))
       : sites;
+    if (filterActive) filtered = filtered.filter((s) => matchingSiteIds.has(s.cwsId));
     filtered.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
 
-    const scheduleAll = await DB.allSchedule();
     const countBySite = {};
-    scheduleAll.forEach((it) => { if (it.siteId) countBySite[it.siteId] = (countBySite[it.siteId] || 0) + 1; });
+    scopedSchedule.forEach((it) => { if (it.siteId) countBySite[it.siteId] = (countBySite[it.siteId] || 0) + 1; });
 
     const pageSize = 50;
     const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
     const page = Math.min(totalPages, Math.max(1, Number(params.get('page')) || 1));
     const shown = filtered.slice((page - 1) * pageSize, page * pageSize);
-    const countLine = qn
+    const countLine = qn || filterActive
       ? `${filtered.length}건 검색됨 (전체 ${sites.length}건)`
       : `전체 ${sites.length}건 · ${page}/${totalPages}페이지`;
 
     if (!shown.length) {
-      return header + `<div class="empty-state">${ICONS.site}<h3>검색 결과가 없습니다</h3><p>다른 검색어를 입력해보세요.</p></div>`;
+      return header + `<div class="empty-state">${ICONS.site}<h3>${qn ? '검색 결과가 없습니다' : '조건에 맞는 현장이 없습니다'}</h3><p>${qn ? '다른 검색어를 입력해보세요.' : '기간·점검조 필터를 바꿔보세요.'}</p></div>`;
     }
 
     const rows = await Promise.all(shown.map(async (s) => {
@@ -501,7 +539,7 @@ const Views = {
         </div>`;
     }));
 
-    const pageQuery = qn ? `&q=${encodeURIComponent(q)}` : '';
+    const pageQuery = (qn ? `&q=${encodeURIComponent(q)}` : '') + (hasPeriod ? `&start=${periodStart}&end=${periodEnd}` : '');
     const pagination = totalPages > 1 ? `
       <div class="pagination">
         <div class="page-btn ${page === 1 ? 'disabled' : ''}" data-href="/sites?page=${page - 1}${pageQuery}">${ICONS.chevronL} 이전</div>

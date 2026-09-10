@@ -258,6 +258,15 @@ document.addEventListener('click', async (e) => {
     });
     await DB.updateSchedule(id, { extra });
     toast('저장했습니다');
+  } else if (action === 'apply-sites-period') {
+    const start = document.getElementById('sites-start').value;
+    const end = document.getElementById('sites-end').value;
+    const q = document.getElementById('site-q').value.trim();
+    const qs = new URLSearchParams();
+    if (start) qs.set('start', start);
+    if (end) qs.set('end', end);
+    if (q) qs.set('q', q);
+    location.hash = '#/sites' + (qs.toString() ? '?' + qs.toString() : '');
   } else if (action === 'set-team-filter') {
     await DB.setSetting('activeTeam', actionEl.dataset.team || null);
     render();
@@ -341,7 +350,12 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'site-q') {
     clearTimeout(window._siteQDebounce);
     window._siteQDebounce = setTimeout(() => {
-      location.hash = '#/sites?q=' + encodeURIComponent(e.target.value);
+      const { params } = currentPath();
+      const qs = new URLSearchParams();
+      if (params.get('start')) qs.set('start', params.get('start'));
+      if (params.get('end')) qs.set('end', params.get('end'));
+      if (e.target.value) qs.set('q', e.target.value);
+      location.hash = '#/sites' + (qs.toString() ? '?' + qs.toString() : '');
     }, 250);
   } else if (e.target.id === 'data-q') {
     clearTimeout(window._dataQDebounce);
