@@ -282,9 +282,10 @@ document.addEventListener('click', async (e) => {
     const inspectionType = typeChip ? typeChip.dataset.type : '일반';
     const time = document.getElementById('f-time').value || null;
     const memo = document.getElementById('f-memo').value;
+    const team = document.getElementById('f-team').value.trim() || null;
     if (!date || !siteName) { toast('날짜와 현장을 입력해주세요'); return; }
     const payload = {
-      date, time, inspectionType, memo,
+      date, time, inspectionType, memo, team,
       siteId: siteId || null,
       tempSiteName: siteId ? null : siteName,
     };
@@ -303,6 +304,7 @@ document.addEventListener('click', async (e) => {
     await DB.upsertSite({
       cwsId,
       name,
+      team: get('s-team') || null,
       address: get('s-address'),
       contractor: get('s-contractor'),
       workType: get('s-workType'),

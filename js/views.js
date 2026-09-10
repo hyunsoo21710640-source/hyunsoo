@@ -21,7 +21,7 @@ const ICONS = {
   etc: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
 };
 
-const ADD_BTN = `<button class="icon-btn" data-action="open-add-choice" style="background:var(--blue);">${ICONS.plusSmall}</button>`;
+const ADD_BTN = `<button class="icon-btn icon-btn-accent" data-action="open-add-choice" style="background:var(--blue);">${ICONS.plusSmall}</button>`;
 
 function pillHtml(label, color, extra = '') {
   return `<span class="pill" style="background:${color.bg};color:${color.fg};${extra}">${escapeHtml(label)}</span>`;
@@ -47,8 +47,10 @@ function copyLink(value, action = 'copy') {
 async function teamChipsHtml(activeTeam) {
   const teams = await DB.allTeams();
   if (!teams.length) return '';
-  const chip = (label, value) => `<div class="chip ${activeTeam === value ? 'selected' : ''}" data-action="set-team-filter" data-team="${escapeHtml(value)}" style="flex-shrink:0;cursor:pointer;">${escapeHtml(label)}</div>`;
-  return `<div style="display:flex;gap:8px;overflow-x:auto;margin-bottom:12px;padding-bottom:2px;">${chip('전체', '')}${teams.map((t) => chip(t, t)).join('')}</div>`;
+  const chip = (label, value) => `<div class="team-chip ${activeTeam === value ? 'selected' : ''}" data-action="set-team-filter" data-team="${escapeHtml(value)}">${escapeHtml(label)}</div>`;
+  return `
+    <div class="field-label" style="margin-bottom:8px;">점검조 필터</div>
+    <div class="team-chip-row">${chip('전체', '')}${teams.map((t) => chip(t, t)).join('')}</div>`;
 }
 
 // 점검조 필터가 걸려 있을 때 다른 화면에서 조용히 줄어든 건수를 알아채도록 보여주는 배지. 탭하면 해제.
@@ -549,9 +551,10 @@ const Views = {
       </div>
       <div>
         <h1 style="margin:0 0 3px;font-size:20px;font-weight:800;letter-spacing:-.01em;line-height:1.3;">${escapeHtml(site.name || '(이름 없음)')}</h1>
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
           <span style="font-size:13px;color:var(--text-soft);">${escapeHtml(site.address || '')}</span>
           ${copyLink(site.address)}
+          ${site.team ? pillHtml(site.team, { bg: 'var(--blue-bg)', fg: 'var(--blue-dark)' }) : ''}
         </div>
 
         ${progressCard}
@@ -582,6 +585,7 @@ const Views = {
   async renderSiteEdit(cwsId) {
     const site = await DB.getSite(cwsId);
     if (!site) return `<div class="empty-state"><h3>현장을 찾을 수 없습니다</h3></div>`;
+    const teams = await DB.allTeams();
     const field = (id, label, value, type = 'text') => `
       <div class="field-label">${label}</div>
       <input id="${id}" type="${type}" value="${escapeHtml(value || '')}" class="field-box" style="width:100%;margin-bottom:14px;">`;
@@ -595,6 +599,9 @@ const Views = {
       </div>
       <div>
         ${field('s-name', '현장명', site.name)}
+        <div class="field-label">담당 점검조 <span style="font-weight:500;">(선택)</span></div>
+        <input id="s-team" list="s-team-list" value="${escapeHtml(site.team || '')}" placeholder="예: 1조" class="field-box" style="width:100%;margin-bottom:14px;">
+        <datalist id="s-team-list">${teams.map((t) => `<option value="${escapeHtml(t)}">`).join('')}</datalist>
         ${field('s-address', '주소', site.address)}
         ${field('s-contractor', '시공자', site.contractor)}
         ${field('s-workType', '공종', site.workType)}
@@ -675,6 +682,8 @@ const Views = {
     const type = existing ? existing.inspectionType : '일반';
     const time = existing ? (existing.time || '') : '';
     const memo = existing ? (existing.memo || '') : '';
+    const team = existing ? (existing.team || '') : (site && site.team ? site.team : '');
+    const teams = await DB.allTeams();
 
     return `
       <div class="topbar">
@@ -699,6 +708,10 @@ const Views = {
           <span style="font-size:13px;color:var(--blue);font-weight:600;">마스터에 없는 새 현장 직접 입력</span>
         </label>
 
+        <div class="field-label">점검조 <span style="font-weight:500;">(선택)</span></div>
+        <input id="f-team" list="f-team-list" value="${escapeHtml(team)}" placeholder="예: 1조" class="field-box" style="width:100%;margin-bottom:16px;">
+        <datalist id="f-team-list">${teams.map((t) => `<option value="${escapeHtml(t)}">`).join('')}</datalist>
+
         <div class="field-label">점검구분</div>
         <div id="f-type-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
           ${INSPECTION_TYPES.map((t) => `<span class="chip ${t === type ? 'selected' : ''}" data-type="${t}">${t}</span>`).join('')}
@@ -719,6 +732,7 @@ const Views = {
     const suggestBox = document.getElementById('f-site-suggestions');
     const siteIdInput = document.getElementById('f-site-id');
     const newSiteCheck = document.getElementById('f-new-site');
+    const teamInput = document.getElementById('f-team');
     if (!searchInput) return;
 
     let debounce = null;
@@ -729,7 +743,7 @@ const Views = {
         if (newSiteCheck.checked || !searchInput.value.trim()) { suggestBox.innerHTML = ''; return; }
         const results = await DB.searchSites(searchInput.value);
         suggestBox.innerHTML = results.map((s) => `
-          <div class="card" data-pick-site="${s.cwsId}" data-pick-name="${escapeHtml(s.name)}" style="padding:11px 13px;cursor:pointer;border-bottom:1px solid var(--border-soft);">
+          <div class="card" data-pick-site="${s.cwsId}" data-pick-name="${escapeHtml(s.name)}" data-pick-team="${escapeHtml(s.team || '')}" style="padding:11px 13px;cursor:pointer;border-bottom:1px solid var(--border-soft);">
             <div style="font-size:13.5px;font-weight:600;">${escapeHtml(s.name)}</div>
           </div>`).join('');
       }, 200);
@@ -740,6 +754,8 @@ const Views = {
       if (!el) return;
       siteIdInput.value = el.dataset.pickSite;
       searchInput.value = el.dataset.pickName;
+      // 점검조를 아직 직접 입력하지 않았다면 선택한 현장의 담당 점검조로 채워준다.
+      if (!teamInput.value.trim() && el.dataset.pickTeam) teamInput.value = el.dataset.pickTeam;
       suggestBox.innerHTML = '';
     });
 
