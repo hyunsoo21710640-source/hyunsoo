@@ -43,14 +43,23 @@ function copyLink(value, action = 'copy') {
   return `<span data-action="${action}" data-value="${escapeHtml(value)}" style="color:var(--blue);font-weight:700;font-size:11.5px;cursor:pointer;">복사</span>`;
 }
 
-// 캘린더 화면의 점검조 선택 칩 목록. 저장된 team 값이 하나도 없으면 숨긴다.
-async function teamChipsHtml(activeTeam) {
+// 캘린더 화면의 점검조 선택 칩 목록. 조마다 고유 색으로 구분하고 이번 달 건수를 보여준다.
+// 저장된 team 값이 하나도 없으면 숨긴다.
+async function teamChipsHtml(activeTeam, monthItems) {
   const teams = await DB.allTeams();
   if (!teams.length) return '';
-  const chip = (label, value) => `<div class="team-chip ${activeTeam === value ? 'selected' : ''}" data-action="set-team-filter" data-team="${escapeHtml(value)}">${escapeHtml(label)}</div>`;
+  const countOf = (team) => monthItems.filter((it) => it.team === team).length;
+  const chip = (label, value, hue) => {
+    const selected = activeTeam === value;
+    return `
+      <div class="team-chip" data-action="set-team-filter" data-team="${escapeHtml(value)}"
+        style="background:${selected ? hue : hue + '18'};color:${selected ? '#fff' : hue};border-color:${selected ? hue : hue + '33'};">
+        <span class="team-chip-dot" style="background:${selected ? '#fff' : hue};"></span>${escapeHtml(label)}${value ? `<span class="team-chip-count" style="opacity:${selected ? '.85' : '.75'};">${countOf(value)}</span>` : ''}
+      </div>`;
+  };
   return `
     <div class="field-label" style="margin-bottom:8px;">점검조 필터</div>
-    <div class="team-chip-row">${chip('전체', '')}${teams.map((t) => chip(t, t)).join('')}</div>`;
+    <div class="team-chip-row">${chip('전체', '', '#17796f')}${teams.map((t) => chip(t, t, hueForTeam(t))).join('')}</div>`;
 }
 
 // 점검조 필터가 걸려 있을 때 다른 화면에서 조용히 줄어든 건수를 알아채도록 보여주는 배지. 탭하면 해제.
@@ -352,7 +361,8 @@ const Views = {
 
     const activeTeam = await DB.getSetting('activeTeam', null);
     const { start, end } = monthRange(year, month);
-    const items = filterByTeam(await DB.scheduleInRange(start, end), activeTeam);
+    const monthItems = await DB.scheduleInRange(start, end);
+    const items = filterByTeam(monthItems, activeTeam);
     const firstTypeByDate = {};
     items.forEach((it) => { if (!firstTypeByDate[it.date]) firstTypeByDate[it.date] = it.inspectionType; });
 
@@ -407,7 +417,7 @@ const Views = {
           <button class="icon-btn" style="width:28px;height:28px;" data-href="/calendar?date=${selected}&month=${nextMonth}">${ICONS.chevronR}</button>
         </div>
       </div>
-      ${await teamChipsHtml(activeTeam)}
+      ${await teamChipsHtml(activeTeam, monthItems)}
       <div class="card" style="margin-bottom:16px;padding:8px 4px 10px;">
         <div style="display:grid;grid-template-columns:repeat(7,1fr);padding:6px 4px 4px;">
           ${WEEKDAY_KR.map((w, i) => `<span style="text-align:center;font-size:11px;font-weight:700;color:${i === 0 ? 'var(--red)' : i === 6 ? 'var(--blue)' : 'var(--text)'};">${w}</span>`).join('')}
@@ -420,11 +430,11 @@ const Views = {
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;">
         ${named.length ? named.map(({ it, name }) => `
-          <div class="card" data-href="/item/${it.id}" style="display:flex;align-items:center;gap:10px;padding:12px 13px;cursor:pointer;">
+          <div class="card" data-href="/item/${it.id}" style="display:flex;align-items:center;gap:10px;padding:12px 13px;cursor:pointer;${it.team ? `border-left:3px solid ${hueForTeam(it.team)};` : ''}">
             <span style="width:30px;height:30px;flex-shrink:0;border-radius:9px;background:${typeColor(it.inspectionType).bg};color:${typeColor(it.inspectionType).fg};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;">${escapeHtml(name[0] || '?')}</span>
             <div style="min-width:0;flex:1;">
               <div style="font-size:14px;font-weight:700;">${escapeHtml(name)}</div>
-              <div style="font-size:11.5px;color:var(--text-soft);">${it.time ? it.time + ' ' : ''}<span style="font-weight:700;color:${statusColor(it.status).fg};">${escapeHtml(it.status)}</span> · ${escapeHtml(it.inspectionType)}</div>
+              <div style="font-size:11.5px;color:var(--text-soft);">${it.time ? it.time + ' ' : ''}<span style="font-weight:700;color:${statusColor(it.status).fg};">${escapeHtml(it.status)}</span> · ${escapeHtml(it.inspectionType)}${it.team ? ` · <span style="font-weight:700;color:${hueForTeam(it.team)};">${escapeHtml(it.team)}</span>` : ''}</div>
             </div>
             ${overdueBadge(it)}
           </div>`).join('') : '<div style="color:var(--text-soft);font-size:13.5px;padding:24px 0;text-align:center;">이 날짜엔 일정이 없습니다.</div>'}

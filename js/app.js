@@ -41,6 +41,14 @@ function filterByTeam(items, activeTeam) {
   return activeTeam ? items.filter((it) => it.team === activeTeam) : items;
 }
 
+// 점검조마다 고유 색을 배정한다(같은 조 이름은 항상 같은 색). 기존에 쓰던 색상만 재사용.
+const TEAM_HUE_PALETTE = ['#0a5bb8', '#00778a', '#9c1fae', '#a85400', '#5b3fc4', '#00786b', '#c81217', '#6b6b70'];
+function hueForTeam(team) {
+  let hash = 0;
+  for (let i = 0; i < team.length; i++) hash = (hash * 31 + team.charCodeAt(i)) >>> 0;
+  return TEAM_HUE_PALETTE[hash % TEAM_HUE_PALETTE.length];
+}
+
 // 조치중 상태가 15일 넘게 이어지면 "조치 지연"으로 본다 (목업의 규칙을 그대로 따름)
 function overdueDays(item) {
   if (item.status !== '조치중') return 0;
