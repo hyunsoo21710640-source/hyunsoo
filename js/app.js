@@ -96,6 +96,26 @@ function escapeHtml(s) {
   })[c]);
 }
 
+// 일정 추가/상세 화면(#f-date 등)의 현재 입력값을 읽는다. 날짜·현장명이 비어 있으면(폼이 없는 화면이거나 아직 안 채워짐) null.
+function readScheduleForm() {
+  const dateEl = document.getElementById('f-date');
+  if (!dateEl) return null;
+  const date = dateEl.value;
+  const siteId = document.getElementById('f-site-id').value || null;
+  const siteName = document.getElementById('f-site-search').value.trim();
+  if (!date || !siteName) return null;
+  const typeChip = document.querySelector('#f-type-chips .chip.selected');
+  return {
+    date,
+    time: document.getElementById('f-time').value || null,
+    inspectionType: typeChip ? typeChip.dataset.type : '일반',
+    memo: document.getElementById('f-memo').value,
+    team: document.getElementById('f-team').value.trim() || null,
+    siteId,
+    tempSiteName: siteId ? null : siteName,
+  };
+}
+
 let toastTimer = null;
 function toast(msg) {
   const el = document.getElementById('toast');
@@ -137,19 +157,16 @@ async function render() {
 
   const main = document.getElementById('main');
   let itemMatch = path.match(/^\/item\/(\d+)$/);
-  let editMatch = path.match(/^\/add\/(\d+)$/);
   let siteMatch = path.match(/^\/site\/(.+)$/);
   let siteEditMatch = path.match(/^\/site-edit\/(.+)$/);
   if (itemMatch) {
     main.innerHTML = await Views.renderSiteDetail(Number(itemMatch[1]));
-  } else if (editMatch) {
-    main.innerHTML = await Views.renderAddEdit(Number(editMatch[1]));
   } else if (siteEditMatch) {
     main.innerHTML = await Views.renderSiteEdit(decodeURIComponent(siteEditMatch[1]));
   } else if (siteMatch) {
     main.innerHTML = await Views.renderSiteInfo(decodeURIComponent(siteMatch[1]));
   } else if (path === '/add') {
-    main.innerHTML = await Views.renderAddEdit(undefined, params.get('site') || undefined);
+    main.innerHTML = await Views.renderAddEdit(params.get('site') || undefined);
   } else if (routes[path]) {
     main.innerHTML = await routes[path](params);
   } else {
@@ -243,12 +260,10 @@ document.addEventListener('click', async (e) => {
   } else if (action === 'pick-file') {
     document.getElementById('file-input').click();
   } else if (action === 'set-status') {
-    await DB.updateSchedule(Number(actionEl.dataset.id), { status: actionEl.dataset.status });
+    // 상태 버튼은 즉시 반영되지만, 같은 화면에 아직 저장 안 된 다른 입력값(날짜 등)이 있으면 함께 저장해 유실을 막는다.
+    const form = readScheduleForm() || {};
+    await DB.updateSchedule(Number(actionEl.dataset.id), Object.assign({}, form, { status: actionEl.dataset.status }));
     render();
-  } else if (action === 'save-memo') {
-    const memo = document.getElementById('memo-input').value;
-    await DB.updateSchedule(Number(actionEl.dataset.id), { memo });
-    toast('저장했습니다');
   } else if (action === 'save-extra') {
     const id = Number(actionEl.dataset.id);
     const extra = {};
@@ -292,23 +307,12 @@ document.addEventListener('click', async (e) => {
     }
   } else if (action === 'save-schedule') {
     const id = actionEl.dataset.id ? Number(actionEl.dataset.id) : null;
-    const date = document.getElementById('f-date').value;
-    const siteId = document.getElementById('f-site-id').value || null;
-    const siteName = document.getElementById('f-site-search').value.trim();
-    const typeChip = document.querySelector('#f-type-chips .chip.selected');
-    const inspectionType = typeChip ? typeChip.dataset.type : '일반';
-    const time = document.getElementById('f-time').value || null;
-    const memo = document.getElementById('f-memo').value;
-    const team = document.getElementById('f-team').value.trim() || null;
-    if (!date || !siteName) { toast('날짜와 현장을 입력해주세요'); return; }
-    const payload = {
-      date, time, inspectionType, memo, team,
-      siteId: siteId || null,
-      tempSiteName: siteId ? null : siteName,
-    };
+    const payload = readScheduleForm();
+    if (!payload) { toast('날짜와 현장을 입력해주세요'); return; }
     if (id) {
       await DB.updateSchedule(id, payload);
-      location.hash = '#/item/' + id;
+      toast('저장했습니다');
+      render();
     } else {
       const created = await DB.addSchedule(Object.assign({ source: 'MANUAL', status: '예정' }, payload));
       location.hash = '#/item/' + created.id;

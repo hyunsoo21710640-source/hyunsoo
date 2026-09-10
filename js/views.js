@@ -249,7 +249,7 @@ function itemRow(item, name, opts = {}) {
 
 const Views = {
   async afterRender(path) {
-    if (path === '/add' || path.startsWith('/add/')) Views._wireAddEdit();
+    if (path === '/add' || path.startsWith('/item/')) Views._wireAddEdit();
   },
 
   // ---------- 업무 현황 ----------
@@ -668,7 +668,8 @@ const Views = {
     const item = await DB.getSchedule(id);
     if (!item) return `<div class="empty-state"><h3>일정을 찾을 수 없습니다</h3></div>`;
     const site = item.siteId ? await DB.getSite(item.siteId) : null;
-    const name = site ? site.name : (item.tempSiteName || '(현장명 없음)');
+    const siteName = site ? site.name : (item.tempSiteName || '');
+    const teams = await DB.allTeams();
 
     const statusOptions = statusListFor(item.inspectionType);
     const statusBtns = statusOptions.map((s) => {
@@ -689,60 +690,17 @@ const Views = {
         <div class="topbar-row">
           <button class="icon-btn" data-href="back">${ICONS.back}</button>
           <span style="font-size:15px;font-weight:700;">일정 상세</span>
-          <button class="icon-btn" style="margin-left:auto;" data-href="/add/${item.id}">✎</button>
         </div>
       </div>
       <div>
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
           ${pillHtml(item.inspectionType, typeColor(item.inspectionType))}
           ${pillHtml(`${item.time ? item.time + ' ' : ''}${item.status}`, { bg: 'var(--bg-soft)', fg: 'var(--text-soft)' })}
           ${overdueBadge(item)}
         </div>
-        <h1 style="margin:0 0 3px;font-size:20px;font-weight:800;letter-spacing:-.01em;line-height:1.3;">${escapeHtml(name)}</h1>
-        <div style="font-size:13px;color:var(--text-soft);margin-bottom:18px;">${escapeHtml(site ? site.address : '마스터 정보 없음 · 임시로 담긴 현장')}</div>
 
-        <div style="font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:7px;">점검 상태 변경</div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">${statusBtns}</div>
-
-        ${infoRows.length ? `
-        <div class="card" style="padding:14px 15px;margin-bottom:14px;">
-          <div style="display:grid;grid-template-columns:76px 1fr;row-gap:9px;align-items:center;font-size:12.5px;">
-            ${infoRows.map(([k, v]) => `<span style="color:var(--text-soft);">${k}</span><span style="font-weight:700;display:flex;align-items:center;gap:6px;">${v}</span>`).join('')}
-          </div>
-        </div>` : ''}
-
-        ${await extraFieldsDetailHtml(item)}
-
-        <div style="font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:7px;">비고</div>
-        <textarea id="memo-input" placeholder="점검 중 발견한 사항을 여기에 기록하세요" style="width:100%;min-height:70px;padding:11px 13px;border-radius:12px;background:var(--surface);border:1px solid var(--border);font-size:13px;line-height:1.5;font-family:inherit;resize:vertical;margin-bottom:12px;">${escapeHtml(item.memo || '')}</textarea>
-        <button class="btn-primary" style="width:100%;margin-bottom:14px;" data-action="save-memo" data-id="${item.id}">저장</button>
-        <div style="text-align:center;font-size:14px;font-weight:600;color:var(--red);cursor:pointer;" data-action="delete-item" data-id="${item.id}">이 일정 삭제</div>
-      </div>`;
-  },
-
-  // ---------- 새 일정 추가 / 수정 ----------
-  async renderAddEdit(id, presetSiteId) {
-    const existing = id ? await DB.getSchedule(id) : null;
-    let site = existing && existing.siteId ? await DB.getSite(existing.siteId) : null;
-    if (!existing && presetSiteId) site = await DB.getSite(presetSiteId);
-    const date = existing ? existing.date : todayStr();
-    const siteName = site ? site.name : (existing ? existing.tempSiteName : '') || '';
-    const type = existing ? existing.inspectionType : '일반';
-    const time = existing ? (existing.time || '') : '';
-    const memo = existing ? (existing.memo || '') : '';
-    const team = existing ? (existing.team || '') : (site && site.team ? site.team : '');
-    const teams = await DB.allTeams();
-
-    return `
-      <div class="topbar">
-        <div class="topbar-row">
-          <button data-href="back" style="font-size:15px;color:var(--blue);">취소</button>
-          <span style="flex:1;text-align:center;font-size:15px;font-weight:700;margin-left:-40px;">${existing ? '일정 수정' : '새 일정 추가'}</span>
-        </div>
-      </div>
-      <div>
         <div class="field-label">날짜</div>
-        <input id="f-date" type="date" value="${date}" class="field-box" style="width:100%;margin-bottom:16px;">
+        <input id="f-date" type="date" value="${item.date || ''}" class="field-box" style="width:100%;margin-bottom:16px;">
 
         <div class="field-label">현장</div>
         <div style="position:relative;margin-bottom:8px;">
@@ -752,7 +710,68 @@ const Views = {
           <div id="f-site-suggestions" style="margin-top:6px;border-radius:12px;overflow:hidden;"></div>
         </div>
         <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;">
-          <input type="checkbox" id="f-new-site" ${existing && !existing.siteId ? 'checked' : ''} style="width:18px;height:18px;">
+          <input type="checkbox" id="f-new-site" ${item.siteId ? '' : 'checked'} style="width:18px;height:18px;">
+          <span style="font-size:13px;color:var(--blue);font-weight:600;">마스터에 없는 새 현장 직접 입력</span>
+        </label>
+
+        <div class="field-label">점검조 <span style="font-weight:500;">(선택)</span></div>
+        <input id="f-team" list="f-team-list" value="${escapeHtml(item.team || '')}" placeholder="예: 1조" class="field-box" style="width:100%;margin-bottom:16px;">
+        <datalist id="f-team-list">${teams.map((t) => `<option value="${escapeHtml(t)}">`).join('')}</datalist>
+
+        <div class="field-label">점검구분</div>
+        <div id="f-type-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+          ${INSPECTION_TYPES.map((t) => `<span class="chip ${t === item.inspectionType ? 'selected' : ''}" data-type="${t}">${t}</span>`).join('')}
+        </div>
+
+        <div class="field-label">예정 시간 <span style="font-weight:500;">(선택)</span></div>
+        <input id="f-time" type="time" value="${item.time || ''}" class="field-box" style="width:100%;margin-bottom:16px;">
+
+        ${infoRows.length ? `
+        <div class="card" style="padding:14px 15px;margin-bottom:16px;">
+          <div style="display:grid;grid-template-columns:76px 1fr;row-gap:9px;align-items:center;font-size:12.5px;">
+            ${infoRows.map(([k, v]) => `<span style="color:var(--text-soft);">${k}</span><span style="font-weight:700;display:flex;align-items:center;gap:6px;">${v}</span>`).join('')}
+          </div>
+        </div>` : ''}
+
+        <div style="font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:7px;">점검 상태 변경</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">${statusBtns}</div>
+
+        ${await extraFieldsDetailHtml(item)}
+
+        <div class="field-label">메모 <span style="font-weight:500;">(선택)</span></div>
+        <textarea id="f-memo" placeholder="점검 중 발견한 사항을 여기에 기록하세요" style="width:100%;min-height:70px;padding:11px 13px;border-radius:12px;background:var(--surface);border:1px solid var(--border);font-size:13px;line-height:1.5;font-family:inherit;resize:vertical;margin-bottom:20px;">${escapeHtml(item.memo || '')}</textarea>
+
+        <button class="btn-primary" style="width:100%;margin-bottom:14px;" data-action="save-schedule" data-id="${item.id}">저장</button>
+        <div style="text-align:center;font-size:14px;font-weight:600;color:var(--red);cursor:pointer;" data-action="delete-item" data-id="${item.id}">이 일정 삭제</div>
+      </div>`;
+  },
+
+  // ---------- 새 일정 추가 ----------
+  async renderAddEdit(presetSiteId) {
+    const site = presetSiteId ? await DB.getSite(presetSiteId) : null;
+    const team = site && site.team ? site.team : '';
+    const teams = await DB.allTeams();
+
+    return `
+      <div class="topbar">
+        <div class="topbar-row">
+          <button data-href="back" style="font-size:15px;color:var(--blue);">취소</button>
+          <span style="flex:1;text-align:center;font-size:15px;font-weight:700;margin-left:-40px;">새 일정 추가</span>
+        </div>
+      </div>
+      <div>
+        <div class="field-label">날짜</div>
+        <input id="f-date" type="date" value="${todayStr()}" class="field-box" style="width:100%;margin-bottom:16px;">
+
+        <div class="field-label">현장</div>
+        <div style="position:relative;margin-bottom:8px;">
+          <input id="f-site-search" type="text" value="${escapeHtml(site ? site.name : '')}" placeholder="현장명으로 검색"
+            class="field-box" style="width:100%;font-weight:600;" autocomplete="off">
+          <input type="hidden" id="f-site-id" value="${site ? site.cwsId : ''}">
+          <div id="f-site-suggestions" style="margin-top:6px;border-radius:12px;overflow:hidden;"></div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;">
+          <input type="checkbox" id="f-new-site" style="width:18px;height:18px;">
           <span style="font-size:13px;color:var(--blue);font-weight:600;">마스터에 없는 새 현장 직접 입력</span>
         </label>
 
@@ -762,16 +781,16 @@ const Views = {
 
         <div class="field-label">점검구분</div>
         <div id="f-type-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
-          ${INSPECTION_TYPES.map((t) => `<span class="chip ${t === type ? 'selected' : ''}" data-type="${t}">${t}</span>`).join('')}
+          ${INSPECTION_TYPES.map((t) => `<span class="chip ${t === '일반' ? 'selected' : ''}" data-type="${t}">${t}</span>`).join('')}
         </div>
 
         <div class="field-label">예정 시간 <span style="font-weight:500;">(선택)</span></div>
-        <input id="f-time" type="time" value="${time}" class="field-box" style="width:100%;margin-bottom:16px;">
+        <input id="f-time" type="time" value="" class="field-box" style="width:100%;margin-bottom:16px;">
 
         <div class="field-label">메모 <span style="font-weight:500;">(선택)</span></div>
-        <textarea id="f-memo" placeholder="준비물이나 확인할 사항" style="width:100%;min-height:70px;padding:11px 13px;border-radius:12px;background:var(--surface);border:1px solid var(--border);font-size:13px;font-family:inherit;resize:vertical;margin-bottom:20px;">${escapeHtml(memo)}</textarea>
+        <textarea id="f-memo" placeholder="준비물이나 확인할 사항" style="width:100%;min-height:70px;padding:11px 13px;border-radius:12px;background:var(--surface);border:1px solid var(--border);font-size:13px;font-family:inherit;resize:vertical;margin-bottom:20px;"></textarea>
 
-        <button class="btn-primary" style="width:100%;" data-action="save-schedule" data-id="${existing ? existing.id : ''}">일정 저장</button>
+        <button class="btn-primary" style="width:100%;" data-action="save-schedule" data-id="">일정 저장</button>
       </div>`;
   },
 
