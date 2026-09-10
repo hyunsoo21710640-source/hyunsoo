@@ -1,6 +1,6 @@
 // 온라인일 땐 항상 최신 파일을 받아오고(네트워크 우선), 오프라인일 때만 캐시로 대체한다.
 // 캐시 우선 방식은 배포한 새 버전이 있어도 계속 옛 버전을 보여주는 문제가 있어 바꿨다.
-const CACHE = 'inspection-notebook-v7';
+const CACHE = 'inspection-notebook-v8';
 const ASSETS = [
   './',
   './index.html',
@@ -33,7 +33,8 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    fetch(e.request).then((res) => {
+    // cache:'no-store'가 없으면 브라우저 자체 HTTP 캐시가 이 fetch를 가로채 옛 파일을 줄 수 있어(SW 캐시와 별개) 명시적으로 껐다.
+    fetch(e.request, { cache: 'no-store' }).then((res) => {
       const copy = res.clone();
       caches.open(CACHE).then((c) => c.put(e.request, copy));
       return res;
