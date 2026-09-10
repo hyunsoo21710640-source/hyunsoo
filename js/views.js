@@ -43,6 +43,20 @@ function copyLink(value, action = 'copy') {
   return `<span data-action="${action}" data-value="${escapeHtml(value)}" style="color:var(--blue);font-weight:700;font-size:11.5px;cursor:pointer;">복사</span>`;
 }
 
+// 캘린더 화면의 점검조 선택 칩 목록. 저장된 team 값이 하나도 없으면 숨긴다.
+async function teamChipsHtml(activeTeam) {
+  const teams = await DB.allTeams();
+  if (!teams.length) return '';
+  const chip = (label, value) => `<div class="chip ${activeTeam === value ? 'selected' : ''}" data-action="set-team-filter" data-team="${escapeHtml(value)}" style="flex-shrink:0;cursor:pointer;">${escapeHtml(label)}</div>`;
+  return `<div style="display:flex;gap:8px;overflow-x:auto;margin-bottom:12px;padding-bottom:2px;">${chip('전체', '')}${teams.map((t) => chip(t, t)).join('')}</div>`;
+}
+
+// 점검조 필터가 걸려 있을 때 다른 화면에서 조용히 줄어든 건수를 알아채도록 보여주는 배지. 탭하면 해제.
+function teamFilterBadge(activeTeam) {
+  if (!activeTeam) return '';
+  return `<div data-action="clear-team-filter" style="display:inline-flex;align-items:center;gap:6px;background:var(--blue-bg);color:var(--blue-dark);border-radius:999px;padding:5px 10px 5px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:12px;">점검조 필터 · ${escapeHtml(activeTeam)} <span style="font-size:14px;line-height:1;">×</span></div>`;
+}
+
 async function siteNameOf(item) {
   if (item.siteId) {
     const s = await DB.getSite(item.siteId);
@@ -205,7 +219,8 @@ const Views = {
   async renderToday() {
     const today = todayStr();
     const weekEnd = addDays(today, 6);
-    const items = await DB.allSchedule();
+    const activeTeam = await DB.getSetting('activeTeam', null);
+    const items = filterByTeam(await DB.allSchedule(), activeTeam);
     const sites = await DB.allSites();
     const upcoming = items.filter((it) => it.date >= today && it.date <= weekEnd && !['완료', '미실시', '조치완료'].includes(it.status));
     const followups = items.filter((it) => ['진행중', '조치중'].includes(it.status));
@@ -238,6 +253,7 @@ const Views = {
         <svg class="hero-art" aria-hidden="true" viewBox="0 0 120 150" fill="none"><rect x="24" y="22" width="77" height="109" rx="13" stroke="currentColor" stroke-width="2"/><rect x="43" y="15" width="39" height="15" rx="6" fill="#234d51" stroke="currentColor" stroke-width="2"/><path d="m39 52 4 4 8-9M59 52h26m-46 24 4 4 8-9m8 5h26m-46 24 4 4 8-9m8 5h18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="95" cy="119" r="22" fill="#bde7d5"/><path d="m84 119 7 7 14-15" stroke="#234d51" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </section>
 
+      ${teamFilterBadge(activeTeam)}
       <div class="section-title summary-heading"><span>한눈에 보는 현황</span><span class="section-caption">오늘 기준</span></div>
       <div class="summary-grid">
         <div class="summary-card" data-href="/calendar" style="cursor:pointer;">
@@ -332,8 +348,9 @@ const Views = {
     const year = y, month = m - 1;
     const selected = params.get('date') || todayStr();
 
+    const activeTeam = await DB.getSetting('activeTeam', null);
     const { start, end } = monthRange(year, month);
-    const items = await DB.scheduleInRange(start, end);
+    const items = filterByTeam(await DB.scheduleInRange(start, end), activeTeam);
     const firstTypeByDate = {};
     items.forEach((it) => { if (!firstTypeByDate[it.date]) firstTypeByDate[it.date] = it.inspectionType; });
 
@@ -368,7 +385,7 @@ const Views = {
     const prevMonth = month === 0 ? `${year - 1}-12` : `${year}-${pad2(month)}`;
     const nextMonth = month === 11 ? `${year + 1}-01` : `${year}-${pad2(month + 2)}`;
 
-    const selItems = (await DB.scheduleByDate(selected)).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+    const selItems = filterByTeam(await DB.scheduleByDate(selected), activeTeam).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
     const named = await Promise.all(selItems.map(async (it) => ({ it, name: await siteNameOf(it) })));
 
     return `
@@ -388,6 +405,7 @@ const Views = {
           <button class="icon-btn" style="width:28px;height:28px;" data-href="/calendar?date=${selected}&month=${nextMonth}">${ICONS.chevronR}</button>
         </div>
       </div>
+      ${await teamChipsHtml(activeTeam)}
       <div class="card" style="margin-bottom:16px;padding:8px 4px 10px;">
         <div style="display:grid;grid-template-columns:repeat(7,1fr);padding:6px 4px 4px;">
           ${WEEKDAY_KR.map((w, i) => `<span style="text-align:center;font-size:11px;font-weight:700;color:${i === 0 ? 'var(--red)' : i === 6 ? 'var(--blue)' : 'var(--text)'};">${w}</span>`).join('')}
@@ -783,7 +801,8 @@ const Views = {
     const qn = query.toLowerCase();
     const pageSize = 50;
     const sites = await DB.allSites();
-    const allItems = await DB.allSchedule();
+    const activeTeam = await DB.getSetting('activeTeam', null);
+    const allItems = filterByTeam(await DB.allSchedule(), activeTeam);
     const siteMap = new Map(sites.map((s) => [s.cwsId, s]));
     const excelCount = allItems.filter((it) => it.source === 'EXCEL').length;
     const unscheduledCount = allItems.filter((it) => !it.date).length;
@@ -823,6 +842,7 @@ const Views = {
           <button class="icon-btn" style="margin-left:auto;" data-href="/settings" aria-label="설정">${ICONS.settings}</button>
         </div>
       </div>
+      ${teamFilterBadge(activeTeam)}
       <div class="card" style="padding:14px;margin-bottom:12px;">
         <div style="display:grid;grid-template-columns:repeat(4,1fr);text-align:center;">
           <div><div style="font-size:20px;font-weight:900;">${excelCount}</div><div style="font-size:11.5px;color:var(--text-soft);">엑셀 일정</div></div>

@@ -36,6 +36,11 @@ const GRAY_COLOR = { bg: 'var(--bg-soft)', fg: 'var(--text-soft)' };
 function typeColor(t) { return TYPE_COLOR[t] || GRAY_COLOR; }
 function statusColor(s) { return STATUS_COLOR[s] || GRAY_COLOR; }
 
+// activeTeam이 없으면(전체) 그대로, 있으면 해당 점검조 일정만 남긴다.
+function filterByTeam(items, activeTeam) {
+  return activeTeam ? items.filter((it) => it.team === activeTeam) : items;
+}
+
 // 조치중 상태가 15일 넘게 이어지면 "조치 지연"으로 본다 (목업의 규칙을 그대로 따름)
 function overdueDays(item) {
   if (item.status !== '조치중') return 0;
@@ -245,6 +250,12 @@ document.addEventListener('click', async (e) => {
     });
     await DB.updateSchedule(id, { extra });
     toast('저장했습니다');
+  } else if (action === 'set-team-filter') {
+    await DB.setSetting('activeTeam', actionEl.dataset.team || null);
+    render();
+  } else if (action === 'clear-team-filter') {
+    await DB.setSetting('activeTeam', null);
+    render();
   } else if (action === 'toggle-extra-field') {
     const field = actionEl.dataset.field;
     const current = await DB.getSetting('visibleExtraFields', DEFAULT_VISIBLE_EXTRA_FIELDS);

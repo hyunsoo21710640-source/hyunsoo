@@ -160,6 +160,13 @@ const DB = {
     all.forEach((it) => { if (it.extra) Object.keys(it.extra).forEach((k) => keys.add(k)); });
     return [...keys];
   },
+  // 저장된 일정에 찍힌 점검조(team) 값의 중복 없는 목록(가나다순)
+  async allTeams() {
+    const all = await DB.allSchedule();
+    const set = new Set();
+    all.forEach((it) => { if (it.team) set.add(it.team); });
+    return [...set].sort((a, b) => a.localeCompare(b, 'ko'));
+  },
 
   async clearAll() {
     const db = await openDb();
