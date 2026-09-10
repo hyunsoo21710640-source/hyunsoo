@@ -121,6 +121,45 @@ async function extraFieldSettingsHtml() {
     </div>`;
 }
 
+// 일정 상세의 현장 정보 박스(시공자/공종/계약일자 등)에서 기본으로 보여줄 필드를 고르는 체크박스 목록.
+async function siteFieldSettingsHtml() {
+  const visible = new Set(await DB.getSetting('visibleSiteFields', DEFAULT_VISIBLE_SITE_FIELDS));
+  const checkRow = (def) => `<label style="display:flex;align-items:center;gap:10px;padding:11px 15px;cursor:pointer;">
+      <input type="checkbox" data-action="toggle-site-field" data-field="${escapeHtml(def.key)}" ${visible.has(def.key) ? 'checked' : ''} style="width:18px;height:18px;">
+      <span style="font-size:14px;">${escapeHtml(def.label)}</span>
+    </label>`;
+  return `
+    <div style="font-size:12px;font-weight:700;color:var(--text-soft);text-transform:uppercase;margin:0 4px 6px;">일정 상세 현장 정보 박스에 표시할 항목</div>
+    <div class="card" style="overflow:hidden;margin-bottom:20px;">
+      ${SITE_FIELD_DEFS.map(checkRow).join('<div style="height:1px;background:var(--border);margin:0 15px;"></div>')}
+    </div>`;
+}
+
+// 일정 상세의 현장 정보 박스. 라벨(위)·값(아래) 2열 그리드로 기본 항목을 보여주고,
+// 나머지는 "더보기"에 접어 넣는다.
+async function siteInfoGridHtml(site) {
+  if (!site) return '';
+  const visible = await DB.getSetting('visibleSiteFields', DEFAULT_VISIBLE_SITE_FIELDS);
+  const valueOf = (def) => {
+    const raw = site[def.key];
+    if (raw == null || raw === '') return null;
+    return def.format ? def.format(raw) : raw;
+  };
+  const cell = (def, val) => `<div><div class="info-label">${escapeHtml(def.label)}</div><div class="info-value">${escapeHtml(String(val))}</div></div>`;
+  const visibleCells = SITE_FIELD_DEFS.filter((d) => visible.includes(d.key)).map((d) => { const v = valueOf(d); return v != null ? cell(d, v) : ''; }).filter(Boolean);
+  const moreCells = SITE_FIELD_DEFS.filter((d) => !visible.includes(d.key)).map((d) => { const v = valueOf(d); return v != null ? cell(d, v) : ''; }).filter(Boolean);
+  if (!visibleCells.length && !moreCells.length) return '';
+  return `
+    <div class="info-grid-box">
+      <div class="info-grid">${visibleCells.join('')}</div>
+      ${moreCells.length ? `
+      <details style="margin-top:12px;">
+        <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:var(--blue);">더보기 (${moreCells.length})</summary>
+        <div class="info-grid" style="margin-top:12px;">${moreCells.join('')}</div>
+      </details>` : ''}
+    </div>`;
+}
+
 // schedule.extra를 의미별로 묶어 보여주기 위한 그룹 정의.
 // 매핑에 없는 키(회사가 컬럼명을 새로 바꾼 경우)는 자동으로 "기타" 그룹에 떨어지므로
 // 새 엑셀 헤더가 와도 화면이 깨지지 않는다 (범용 bag 정책 유지).
@@ -702,14 +741,8 @@ const Views = {
       const c = statusColor(s);
       const on = item.status === s;
       return `<span data-action="set-status" data-id="${item.id}" data-status="${s}"
-        style="height:40px;padding:0 15px;border-radius:12px;display:flex;align-items:center;font-size:13.5px;font-weight:700;cursor:pointer;background:${on ? c.fg : c.bg};color:${on ? '#fff' : c.fg};">${s}</span>`;
+        style="height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:13px;font-weight:700;cursor:pointer;background:${on ? c.fg : c.bg};color:${on ? '#fff' : c.fg};">${on ? ICONS.check : ''}${s}</span>`;
     }).join('');
-
-    const infoRows = (site ? [
-      ['시공자', escapeHtml(site.contractor)], ['공종', escapeHtml([site.workType, site.workDetail].filter(Boolean).join(' · '))],
-      ['전화번호', site.phone ? `${escapeHtml(site.phone)} ${copyLink(site.phone)}` : ''],
-      ['준공예정', escapeHtml(site.endDate)],
-    ] : []).filter(([, v]) => v);
 
     return `
       <div class="topbar">
@@ -752,15 +785,10 @@ const Views = {
         <div class="field-label">예정 시간 <span style="font-weight:500;">(선택)</span></div>
         <input id="f-time" type="time" value="${item.time || ''}" class="field-box" style="width:100%;margin-bottom:16px;">
 
-        ${infoRows.length ? `
-        <div class="card" style="padding:14px 15px;margin-bottom:16px;">
-          <div style="display:grid;grid-template-columns:76px 1fr;row-gap:9px;align-items:center;font-size:12.5px;">
-            ${infoRows.map(([k, v]) => `<span style="color:var(--text-soft);">${k}</span><span style="font-weight:700;display:flex;align-items:center;gap:6px;">${v}</span>`).join('')}
-          </div>
-        </div>` : ''}
+        ${await siteInfoGridHtml(site)}
 
         <div style="font-size:12px;font-weight:700;color:var(--text-soft);margin-bottom:7px;">점검 상태 변경</div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">${statusBtns}</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;">${statusBtns}</div>
 
         ${await extraFieldsDetailHtml(item)}
 
@@ -892,6 +920,7 @@ const Views = {
         ${navRow('저장된 데이터 보기·삭제', '/data')}
       </div>
 
+      ${await siteFieldSettingsHtml()}
       ${await extraFieldSettingsHtml()}
 
       <div style="font-size:12.5px;color:var(--text-soft);margin:0 4px 20px;line-height:1.5;">모든 데이터는 이 기기(브라우저)에만 저장됩니다. 기기를 바꾸면 데이터가 이전되지 않습니다.</div>

@@ -2,9 +2,9 @@
 const INSPECTION_TYPES = ['일반', '합동점검', '패트롤', '불시점검', '컨설팅', '사망사고 합동점검'];
 
 // 패트롤은 현장에 있는 동안 실시간으로 "진행중"을 쓰고,
-// 그 외 점검은 방문 후 지적사항 조치 여부(조치중/조치완료)를 추적한다.
+// 그 외 점검은 예정 → 조치중 → 완료 3단계로 단순화(완료가 기존 "조치완료" 역할도 겸함).
 const STATUS_LIST_PATROL = ['예정', '진행중', '완료', '미실시'];
-const STATUS_LIST_DEFAULT = ['예정', '완료', '조치중', '조치완료', '미실시'];
+const STATUS_LIST_DEFAULT = ['예정', '조치중', '완료'];
 
 function statusListFor(inspectionType) {
   return inspectionType === '패트롤' ? STATUS_LIST_PATROL : STATUS_LIST_DEFAULT;
@@ -13,6 +13,21 @@ function statusListFor(inspectionType) {
 // 엑셀 헤더 중 정식 필드로 매칭되지 않는 나머지 항목(schedule.extra)의 기본 표시 목록.
 // 설정 화면에서 사용자가 체크박스로 바꿀 수 있다.
 const DEFAULT_VISIBLE_EXTRA_FIELDS = ['지역', '발주자', '우선순위', '위험성', '발생가능사고종류', '안전관리계획서수립대상', '품질'];
+
+// 일정 상세의 현장 정보 박스에 어떤 필드를 보여줄지. 나머지는 "더보기"에 접혀 들어간다.
+// 설정 화면에서 사용자가 체크박스로 바꿀 수 있다.
+const SITE_FIELD_DEFS = [
+  { key: 'contractor', label: '시공자' },
+  { key: 'workType', label: '공종' },
+  { key: 'workDetail', label: '세부공종' },
+  { key: 'contractDate', label: '계약일자' },
+  { key: 'startDate', label: '착공일' },
+  { key: 'endDate', label: '준공예정' },
+  { key: 'contractAmount', label: '도급금액', format: (v) => `${Number(v).toLocaleString()}원` },
+  { key: 'phone', label: '전화번호' },
+  { key: 'bizNo', label: '사업자등록번호' },
+];
+const DEFAULT_VISIBLE_SITE_FIELDS = ['contractor', 'workType', 'contractDate', 'startDate', 'endDate', 'contractAmount'];
 
 // Claude Design(iOS 26) 목업의 TYPE_COLOR/STATUS_COLOR를 그대로 이식
 const TYPE_COLOR = {
@@ -319,6 +334,12 @@ document.addEventListener('click', async (e) => {
     const set = new Set(current);
     if (actionEl.checked) set.add(field); else set.delete(field);
     await DB.setSetting('visibleExtraFields', [...set]);
+  } else if (action === 'toggle-site-field') {
+    const field = actionEl.dataset.field;
+    const current = await DB.getSetting('visibleSiteFields', DEFAULT_VISIBLE_SITE_FIELDS);
+    const set = new Set(current);
+    if (actionEl.checked) set.add(field); else set.delete(field);
+    await DB.setSetting('visibleSiteFields', [...set]);
   } else if (action === 'delete-item') {
     if (confirm('이 일정을 삭제할까요?')) {
       await DB.deleteSchedule(Number(actionEl.dataset.id));
