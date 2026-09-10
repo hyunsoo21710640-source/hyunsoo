@@ -36,25 +36,46 @@ const GRAY_COLOR = { bg: 'var(--bg-soft)', fg: 'var(--text-soft)' };
 function typeColor(t) { return TYPE_COLOR[t] || GRAY_COLOR; }
 function statusColor(s) { return STATUS_COLOR[s] || GRAY_COLOR; }
 
-// activeTeam이 없으면(전체) 그대로, 있으면 해당 점검조 일정만 남긴다.
-function filterByTeam(items, activeTeam) {
-  return activeTeam ? items.filter((it) => it.team === activeTeam) : items;
+// 엑셀마다 "6조" "6 조" "6조 " 처럼 공백만 다르게 들어오는 걸 같은 조로 취급하기 위한 정규화.
+// (excel.js의 normalizeHeader와 같은 방식 — 공백을 전부 제거해 비교)
+function normalizeTeam(team) {
+  return (team || '').replace(/\s+/g, '');
+}
+
+// activeTeams가 비어있으면(전체) 그대로, 아니면 그중 하나라도 걸리는 일정만 남긴다(공백 차이는 같은 조로 취급).
+function filterByTeam(items, activeTeams) {
+  if (!activeTeams || !activeTeams.length) return items;
+  const set = new Set(activeTeams);
+  return items.filter((it) => set.has(normalizeTeam(it.team)));
 }
 
 // 점검조마다 고유 색을 배정한다(같은 조 이름은 항상 같은 색). 기존에 쓰던 색상만 재사용.
 const TEAM_HUE_PALETTE = ['#0a5bb8', '#00778a', '#9c1fae', '#a85400', '#5b3fc4', '#00786b', '#c81217', '#6b6b70'];
 function hueForTeam(team) {
+  const key = normalizeTeam(team);
   let hash = 0;
-  for (let i = 0; i < team.length; i++) hash = (hash * 31 + team.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
   return TEAM_HUE_PALETTE[hash % TEAM_HUE_PALETTE.length];
 }
 
-// 조치중 상태가 15일 넘게 이어지면 "조치 지연"으로 본다 (목업의 규칙을 그대로 따름)
+// 조치중 상태가 이어진 일수로 지연 단계를 매긴다: 7일 초과 주의, 10일 초과 경고.
 function overdueDays(item) {
   if (item.status !== '조치중') return 0;
   return Math.floor((new Date(todayStr()) - new Date(item.date)) / 86400000);
 }
-function isOverdue(item) { return overdueDays(item) > 15; }
+function overdueTier(item) {
+  const d = overdueDays(item);
+  if (d > 10) return 'danger';
+  if (d > 7) return 'warn';
+  return null;
+}
+function isOverdue(item) { return overdueTier(item) !== null; }
+// 정렬용 우선순위: 경고(0) → 주의(1) → 해당없음(2)
+const TIER_RANK = { danger: 0, warn: 1 };
+function tierRank(item) {
+  const t = overdueTier(item);
+  return t ? TIER_RANK[t] : 2;
+}
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function todayStr() {
@@ -282,11 +303,15 @@ document.addEventListener('click', async (e) => {
     if (end) qs.set('end', end);
     if (q) qs.set('q', q);
     location.hash = '#/sites' + (qs.toString() ? '?' + qs.toString() : '');
-  } else if (action === 'set-team-filter') {
-    await DB.setSetting('activeTeam', actionEl.dataset.team || null);
+  } else if (action === 'toggle-team-filter') {
+    const team = actionEl.dataset.team;
+    const current = await DB.getSetting('activeTeams', []);
+    const set = new Set(current);
+    set.has(team) ? set.delete(team) : set.add(team);
+    await DB.setSetting('activeTeams', [...set]);
     render();
   } else if (action === 'clear-team-filter') {
-    await DB.setSetting('activeTeam', null);
+    await DB.setSetting('activeTeams', []);
     render();
   } else if (action === 'toggle-extra-field') {
     const field = actionEl.dataset.field;

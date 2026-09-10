@@ -30,8 +30,10 @@ function countPill(n, color = { bg: 'var(--blue-bg)', fg: 'var(--blue-dark)' }) 
   return pillHtml(`${n}건`, color);
 }
 function overdueBadge(item) {
-  if (!isOverdue(item)) return '';
-  return pillHtml(`⚠ 조치 지연 ${overdueDays(item)}일`, { bg: 'var(--red-bg)', fg: 'var(--red)' });
+  const tier = overdueTier(item);
+  if (!tier) return '';
+  const danger = tier === 'danger';
+  return pillHtml(`⚠ ${danger ? '경고' : '주의'} ${overdueDays(item)}일`, danger ? { bg: 'var(--red-bg)', fg: 'var(--red)' } : { bg: 'var(--orange-bg)', fg: 'var(--orange)' });
 }
 // 날짜가 없는(예비/준공/미정) 일정을 표시용 문자열로 바꾼다. 원본 사유(dateNote)가 있으면 함께 보여준다.
 function dateLabel(it) {
@@ -43,23 +45,21 @@ function copyLink(value, action = 'copy') {
   return `<span data-action="${action}" data-value="${escapeHtml(value)}" style="color:var(--blue);font-weight:700;font-size:11.5px;cursor:pointer;">복사</span>`;
 }
 
-// 캘린더 화면의 점검조 선택 칩 목록. 조마다 고유 색으로 구분하고 이번 달 건수를 보여준다.
-// 저장된 team 값이 하나도 없으면 숨긴다.
-async function teamChipsHtml(activeTeam, monthItems) {
+// 캘린더/현장 화면의 점검조 선택 칩 목록. 조마다 고유 색으로 구분하고 건수를 보여준다.
+// 여러 조를 동시에 체크할 수 있다(선택된 조 중 하나라도 해당하면 노출). 저장된 team 값이 하나도 없으면 숨긴다.
+async function teamChipsHtml(activeTeams, scopeItems) {
   const teams = await DB.allTeams();
   if (!teams.length) return '';
-  const countOf = (team) => monthItems.filter((it) => it.team === team).length;
-  const chip = (label, value, hue) => {
-    const selected = activeTeam === value;
-    return `
-      <div class="team-chip" data-action="set-team-filter" data-team="${escapeHtml(value)}"
+  const countOf = (team) => scopeItems.filter((it) => normalizeTeam(it.team) === team).length;
+  const noneSelected = !activeTeams || !activeTeams.length;
+  const chip = (label, value, hue, selected) => `
+      <div class="team-chip" data-action="${value ? 'toggle-team-filter' : 'clear-team-filter'}" data-team="${escapeHtml(value)}"
         style="background:${selected ? hue : hue + '18'};color:${selected ? '#fff' : hue};border-color:${selected ? hue : hue + '33'};">
         <span class="team-chip-dot" style="background:${selected ? '#fff' : hue};"></span>${escapeHtml(label)}${value ? `<span class="team-chip-count" style="opacity:${selected ? '.85' : '.75'};">${countOf(value)}</span>` : ''}
       </div>`;
-  };
   return `
-    <div class="field-label" style="margin-bottom:8px;">점검조 필터</div>
-    <div class="team-chip-row">${chip('전체', '', '#17796f')}${teams.map((t) => chip(t, t, hueForTeam(t))).join('')}</div>`;
+    <div class="field-label" style="margin-bottom:8px;">점검조 필터 <span style="font-weight:500;">(여러 개 선택 가능)</span></div>
+    <div class="team-chip-row">${chip('전체', '', '#17796f', noneSelected)}${teams.map((t) => chip(t, t, hueForTeam(t), (activeTeams || []).includes(t))).join('')}</div>`;
 }
 
 // 현장 탭의 기간 필터. 빠른 선택(전체/이번 주/이번 달) + 직접 입력.
@@ -88,10 +88,11 @@ function periodFilterHtml(start, end, q) {
     <button class="btn-secondary" data-action="apply-sites-period" style="width:100%;height:38px;margin-bottom:14px;">기간 적용</button>`;
 }
 
-// 점검조 필터가 걸려 있을 때 다른 화면에서 조용히 줄어든 건수를 알아채도록 보여주는 배지. 탭하면 해제.
-function teamFilterBadge(activeTeam) {
-  if (!activeTeam) return '';
-  return `<div data-action="clear-team-filter" style="display:inline-flex;align-items:center;gap:6px;background:var(--blue-bg);color:var(--blue-dark);border-radius:999px;padding:5px 10px 5px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:12px;">점검조 필터 · ${escapeHtml(activeTeam)} <span style="font-size:14px;line-height:1;">×</span></div>`;
+// 점검조 필터가 걸려 있을 때 다른 화면에서 조용히 줄어든 건수를 알아채도록 보여주는 배지. 탭하면 전체 해제.
+function teamFilterBadge(activeTeams) {
+  if (!activeTeams || !activeTeams.length) return '';
+  const label = activeTeams.length === 1 ? activeTeams[0] : `${activeTeams.length}개 조`;
+  return `<div data-action="clear-team-filter" style="display:inline-flex;align-items:center;gap:6px;background:var(--blue-bg);color:var(--blue-dark);border-radius:999px;padding:5px 10px 5px 12px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:12px;">점검조 필터 · ${escapeHtml(label)} <span style="font-size:14px;line-height:1;">×</span></div>`;
 }
 
 async function siteNameOf(item) {
@@ -256,8 +257,8 @@ const Views = {
   async renderToday() {
     const today = todayStr();
     const weekEnd = addDays(today, 6);
-    const activeTeam = await DB.getSetting('activeTeam', null);
-    const items = filterByTeam(await DB.allSchedule(), activeTeam);
+    const activeTeams = await DB.getSetting('activeTeams', []);
+    const items = filterByTeam(await DB.allSchedule(), activeTeams);
     const sites = await DB.allSites();
     const upcoming = items.filter((it) => it.date >= today && it.date <= weekEnd && !['완료', '미실시', '조치완료'].includes(it.status));
     const followups = items.filter((it) => ['진행중', '조치중'].includes(it.status));
@@ -290,7 +291,7 @@ const Views = {
         <svg class="hero-art" aria-hidden="true" viewBox="0 0 120 150" fill="none"><rect x="24" y="22" width="77" height="109" rx="13" stroke="currentColor" stroke-width="2"/><rect x="43" y="15" width="39" height="15" rx="6" fill="#234d51" stroke="currentColor" stroke-width="2"/><path d="m39 52 4 4 8-9M59 52h26m-46 24 4 4 8-9m8 5h26m-46 24 4 4 8-9m8 5h18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="95" cy="119" r="22" fill="#bde7d5"/><path d="m84 119 7 7 14-15" stroke="#234d51" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </section>
 
-      ${teamFilterBadge(activeTeam)}
+      ${teamFilterBadge(activeTeams)}
       <div class="section-title summary-heading"><span>한눈에 보는 현황</span><span class="section-caption">오늘 기준</span></div>
       <div class="summary-grid">
         <div class="summary-card" data-href="/calendar" style="cursor:pointer;">
@@ -385,12 +386,19 @@ const Views = {
     const year = y, month = m - 1;
     const selected = params.get('date') || todayStr();
 
-    const activeTeam = await DB.getSetting('activeTeam', null);
+    const activeTeams = await DB.getSetting('activeTeams', []);
     const { start, end } = monthRange(year, month);
     const monthItems = await DB.scheduleInRange(start, end);
-    const items = filterByTeam(monthItems, activeTeam);
+    const items = filterByTeam(monthItems, activeTeams);
     const firstTypeByDate = {};
     items.forEach((it) => { if (!firstTypeByDate[it.date]) firstTypeByDate[it.date] = it.inspectionType; });
+    // 그 날짜에 있는 일정 중 가장 심각한 지연 단계(경고 > 주의)를 골라 날짜 테두리색으로 쓴다.
+    const worstTierByDate = {};
+    items.forEach((it) => {
+      const tier = overdueTier(it);
+      if (!tier) return;
+      if (tier === 'danger' || worstTierByDate[it.date] !== 'danger') worstTierByDate[it.date] = tier;
+    });
 
     const first = new Date(year, month, 1);
     const startWeekday = first.getDay();
@@ -408,12 +416,14 @@ const Views = {
       const isSelected = dateStr === selected;
       const t = firstTypeByDate[dateStr];
       const dotColor = t ? typeColor(t).fg : 'transparent';
+      const tier = worstTierByDate[dateStr];
+      const ringColor = tier === 'danger' ? 'var(--red)' : tier === 'warn' ? 'var(--orange)' : 'transparent';
       const weekday = new Date(year, month, d).getDay();
       const numColor = isSelected ? '#fff' : weekday === 0 ? 'var(--red)' : 'var(--text)';
       const circleBg = isSelected ? 'var(--blue)' : isToday ? 'var(--blue-bg)' : 'transparent';
       cells += `
         <div data-href="/calendar?date=${dateStr}&month=${year}-${pad2(month + 1)}" style="text-align:center;padding:4px 0;cursor:pointer;">
-          <div style="width:30px;height:30px;line-height:30px;border-radius:50%;margin:0 auto;font-size:13.5px;font-weight:${isSelected ? 800 : 500};color:${numColor};background:${circleBg};position:relative;">
+          <div style="width:30px;height:30px;line-height:30px;border-radius:50%;margin:0 auto;font-size:13.5px;font-weight:${isSelected ? 800 : 500};color:${numColor};background:${circleBg};box-shadow:inset 0 0 0 2px ${ringColor};position:relative;">
             ${d}
             ${t ? `<i style="position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:${dotColor};"></i>` : ''}
           </div>
@@ -423,7 +433,10 @@ const Views = {
     const prevMonth = month === 0 ? `${year - 1}-12` : `${year}-${pad2(month)}`;
     const nextMonth = month === 11 ? `${year + 1}-01` : `${year}-${pad2(month + 2)}`;
 
-    const selItems = filterByTeam(await DB.scheduleByDate(selected), activeTeam).sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+    const selItems = filterByTeam(await DB.scheduleByDate(selected), activeTeams).sort((a, b) => {
+      const r = tierRank(a) - tierRank(b);
+      return r !== 0 ? r : (a.time || '99:99').localeCompare(b.time || '99:99');
+    });
     const named = await Promise.all(selItems.map(async (it) => ({ it, name: await siteNameOf(it) })));
 
     return `
@@ -443,7 +456,7 @@ const Views = {
           <button class="icon-btn" style="width:28px;height:28px;" data-href="/calendar?date=${selected}&month=${nextMonth}">${ICONS.chevronR}</button>
         </div>
       </div>
-      ${await teamChipsHtml(activeTeam, monthItems)}
+      ${await teamChipsHtml(activeTeams, monthItems)}
       <div class="card" style="margin-bottom:16px;padding:8px 4px 10px;">
         <div style="display:grid;grid-template-columns:repeat(7,1fr);padding:6px 4px 4px;">
           ${WEEKDAY_KR.map((w, i) => `<span style="text-align:center;font-size:11px;font-weight:700;color:${i === 0 ? 'var(--red)' : i === 6 ? 'var(--blue)' : 'var(--text)'};">${w}</span>`).join('')}
@@ -460,7 +473,7 @@ const Views = {
             <span style="width:30px;height:30px;flex-shrink:0;border-radius:9px;background:${typeColor(it.inspectionType).bg};color:${typeColor(it.inspectionType).fg};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;">${escapeHtml(name[0] || '?')}</span>
             <div style="min-width:0;flex:1;">
               <div style="font-size:14px;font-weight:700;">${escapeHtml(name)}</div>
-              <div style="font-size:11.5px;color:var(--text-soft);">${it.time ? it.time + ' ' : ''}<span style="font-weight:700;color:${statusColor(it.status).fg};">${escapeHtml(it.status)}</span> · ${escapeHtml(it.inspectionType)}${it.team ? ` · <span style="font-weight:700;color:${hueForTeam(it.team)};">${escapeHtml(it.team)}</span>` : ''}</div>
+              <div style="font-size:11.5px;color:var(--text-soft);">${it.time ? it.time + ' ' : ''}<span style="font-weight:700;color:${statusColor(it.status).fg};">${escapeHtml(it.status)}</span> · ${escapeHtml(it.inspectionType)}${it.team ? ` · <span style="font-weight:700;color:${hueForTeam(it.team)};">${escapeHtml(normalizeTeam(it.team))}</span>` : ''}</div>
             </div>
             ${overdueBadge(it)}
           </div>`).join('') : '<div style="color:var(--text-soft);font-size:13.5px;padding:24px 0;text-align:center;">이 날짜엔 일정이 없습니다.</div>'}
@@ -470,16 +483,16 @@ const Views = {
   // ---------- 현장(마스터 전체 목록) ----------
   async renderSites(params) {
     const q = params.get('q') || '';
-    const activeTeam = await DB.getSetting('activeTeam', null);
+    const activeTeams = await DB.getSetting('activeTeams', []);
     const periodStart = params.get('start') || '';
     const periodEnd = params.get('end') || '';
     const hasPeriod = !!(periodStart && periodEnd);
-    const filterActive = hasPeriod || !!activeTeam;
+    const filterActive = hasPeriod || !!(activeTeams && activeTeams.length);
 
     const sites = await DB.allSites();
 
     const scopeSchedule = hasPeriod ? await DB.scheduleInRange(periodStart, periodEnd) : await DB.allSchedule();
-    const scopedSchedule = filterByTeam(scopeSchedule, activeTeam);
+    const scopedSchedule = filterByTeam(scopeSchedule, activeTeams);
     const matchingSiteIds = new Set(scopedSchedule.filter((it) => it.siteId).map((it) => it.siteId));
 
     const header = `
@@ -490,7 +503,7 @@ const Views = {
         </div>
         <input id="site-q" value="${escapeHtml(q)}" placeholder="현장명·주소·시공자로 검색" style="margin-top:10px;width:100%;height:38px;border-radius:10px;border:none;background:var(--bg-soft);padding:0 12px;font-size:14px;color:var(--text);outline:none;">
       </div>
-      ${await teamChipsHtml(activeTeam, scopeSchedule)}
+      ${await teamChipsHtml(activeTeams, scopeSchedule)}
       ${periodFilterHtml(periodStart, periodEnd, q)}`;
 
     if (!sites.length) {
@@ -504,10 +517,20 @@ const Views = {
       ? sites.filter((s) => (s.name || '').toLowerCase().includes(qn) || (s.address || '').toLowerCase().includes(qn) || (s.contractor || '').toLowerCase().includes(qn))
       : sites;
     if (filterActive) filtered = filtered.filter((s) => matchingSiteIds.has(s.cwsId));
-    filtered.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'));
 
     const countBySite = {};
-    scopedSchedule.forEach((it) => { if (it.siteId) countBySite[it.siteId] = (countBySite[it.siteId] || 0) + 1; });
+    const tierBySite = {};
+    scopedSchedule.forEach((it) => {
+      if (!it.siteId) return;
+      countBySite[it.siteId] = (countBySite[it.siteId] || 0) + 1;
+      const r = tierRank(it);
+      if (tierBySite[it.siteId] === undefined || r < tierBySite[it.siteId]) tierBySite[it.siteId] = r;
+    });
+    // 조치 지연(경고 > 주의) 현장을 먼저 보여주고, 같은 단계 안에서는 이름순.
+    filtered.sort((a, b) => {
+      const ra = tierBySite[a.cwsId] ?? 2, rb = tierBySite[b.cwsId] ?? 2;
+      return ra !== rb ? ra - rb : (a.name || '').localeCompare(b.name || '', 'ko');
+    });
 
     const pageSize = 50;
     const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -528,10 +551,13 @@ const Views = {
             <div style="flex:1;height:5px;border-radius:999px;background:var(--bg-soft);overflow:hidden;"><div style="width:${progress}%;height:5px;background:var(--blue);"></div></div>
             <span style="font-size:11px;font-weight:700;color:var(--text-soft);">공정률 ${progress}%</span>
           </div>` : '';
+      const tier = tierBySite[s.cwsId] === 0 ? 'danger' : tierBySite[s.cwsId] === 1 ? 'warn' : null;
+      const tierPill = tier ? pillHtml(tier === 'danger' ? '⚠ 경고' : '⚠ 주의', tier === 'danger' ? { bg: 'var(--red-bg)', fg: 'var(--red)' } : { bg: 'var(--orange-bg)', fg: 'var(--orange)' }) : '';
       return `
-        <div class="card" data-href="/site/${encodeURIComponent(s.cwsId)}" style="padding:14px;cursor:pointer;">
+        <div class="card" data-href="/site/${encodeURIComponent(s.cwsId)}" style="padding:14px;cursor:pointer;${tier ? `border-left:3px solid var(--${tier === 'danger' ? 'red' : 'orange'});` : ''}">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
             <span style="font-size:15px;font-weight:800;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.name || '(이름 없음)')}</span>
+            ${tierPill}
             ${countBySite[s.cwsId] ? countPill(countBySite[s.cwsId]) : ''}
           </div>
           <div style="font-size:12.5px;color:var(--text-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(s.address || '')}</div>
@@ -884,8 +910,8 @@ const Views = {
     const qn = query.toLowerCase();
     const pageSize = 50;
     const sites = await DB.allSites();
-    const activeTeam = await DB.getSetting('activeTeam', null);
-    const allItems = filterByTeam(await DB.allSchedule(), activeTeam);
+    const activeTeams = await DB.getSetting('activeTeams', []);
+    const allItems = filterByTeam(await DB.allSchedule(), activeTeams);
     const siteMap = new Map(sites.map((s) => [s.cwsId, s]));
     const excelCount = allItems.filter((it) => it.source === 'EXCEL').length;
     const unscheduledCount = allItems.filter((it) => !it.date).length;
@@ -925,7 +951,7 @@ const Views = {
           <button class="icon-btn" style="margin-left:auto;" data-href="/settings" aria-label="설정">${ICONS.settings}</button>
         </div>
       </div>
-      ${teamFilterBadge(activeTeam)}
+      ${teamFilterBadge(activeTeams)}
       <div class="card" style="padding:14px;margin-bottom:12px;">
         <div style="display:grid;grid-template-columns:repeat(4,1fr);text-align:center;">
           <div><div style="font-size:20px;font-weight:900;">${excelCount}</div><div style="font-size:11.5px;color:var(--text-soft);">엑셀 일정</div></div>
@@ -979,7 +1005,7 @@ const Views = {
             <div data-href="/item/${it.id}" style="min-width:0;flex:1;cursor:pointer;">
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:5px;">${pillHtml(it.inspectionType, typeColor(it.inspectionType))}${pillHtml(it.status, statusColor(it.status))}</div>
               <div style="font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(name)}</div>
-              <div style="font-size:11.5px;color:${it.date ? 'var(--text-soft)' : 'var(--red)'};margin-top:3px;">${dateLabel(it)}${it.time ? ' · ' + escapeHtml(it.time) : ''}${it.team ? ' · ' + escapeHtml(it.team) : ''}</div>
+              <div style="font-size:11.5px;color:${it.date ? 'var(--text-soft)' : 'var(--red)'};margin-top:3px;">${dateLabel(it)}${it.time ? ' · ' + escapeHtml(it.time) : ''}${it.team ? ' · ' + escapeHtml(normalizeTeam(it.team)) : ''}</div>
               <div style="font-size:11px;color:var(--text-mute);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${it.source === 'EXCEL' ? [it.sourceFile || '엑셀에서 가져옴', it.sourceSheet, it.sourceRow ? `${it.sourceRow}행` : ''].filter(Boolean).map(escapeHtml).join(' · ') : '직접 입력'}</div>
             </div>
           </div>`;
