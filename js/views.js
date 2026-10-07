@@ -295,11 +295,39 @@ const Views = {
   // ---------- 업무 현황 ----------
   async renderToday() {
     const today = todayStr();
-    const weekEnd = addDays(today, 6);
+    const weekStart = startOfWeek(today);
+    const weekEnd = addDays(weekStart, 6);
     const activeTeams = await DB.getSetting('activeTeams', []);
     const items = filterByTeam(await DB.allSchedule(), activeTeams);
     const sites = await DB.allSites();
-    const upcoming = items.filter((it) => it.date >= today && it.date <= weekEnd && !['완료', '미실시', '조치완료'].includes(it.status));
+    // 이번 주(일~토) 일정을 요일별 완료/남음으로 집계한다. 미실시는 집계에서 뺀다.
+    const isDone = (it) => ['완료', '조치완료'].includes(it.status);
+    const weekItems = items.filter((it) => it.date && it.date >= weekStart && it.date <= weekEnd && it.status !== '미실시');
+    const weekDone = weekItems.filter(isDone).length;
+    const weekPct = weekItems.length ? Math.round((weekDone / weekItems.length) * 100) : 0;
+    const weekScheduled = weekItems.filter((it) => it.status === '예정').length;
+    const weekFollowup = weekItems.filter((it) => ['진행중', '조치중'].includes(it.status)).length;
+    const dayStats = Array.from({ length: 7 }, (_, i) => {
+      const date = addDays(weekStart, i);
+      const dayItems = weekItems.filter((it) => it.date === date);
+      const done = dayItems.filter(isDone).length;
+      return { dow: WEEKDAY_KR[i], done, todo: dayItems.length - done, today: date === today };
+    });
+    const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`;
+    const weekRangeLabel = `${md(weekStart)} ~ ${md(weekEnd)}`;
+    const ringOffset = Math.round(270.2 * (1 - weekPct / 100));
+    const dayBars = dayStats.map((d) => {
+      const total = d.done + d.todo;
+      return `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:5px;height:100%;">
+            <div style="width:100%;display:flex;flex-direction:column;justify-content:flex-end;gap:2px;height:${total ? Math.min(64, 14 + total * 16) : 6}px;">
+              ${d.todo ? `<div style="flex:${d.todo};border-radius:5px;background:#b9d8d2;"></div>` : ''}
+              ${d.done ? `<div style="flex:${d.done};border-radius:5px;background:var(--blue);"></div>` : ''}
+              ${!total ? '<div style="flex:1;border-radius:3px;background:var(--bg-soft);"></div>' : ''}
+            </div>
+            <span style="font-size:11px;font-weight:${d.today ? 700 : 500};color:${d.today ? 'var(--blue-dark)' : 'var(--text-soft)'};">${d.dow}</span>
+          </div>`;
+    }).join('');
     const followups = items.filter((it) => ['진행중', '조치중'].includes(it.status));
     const delayed = items.filter(isOverdue);
     const excelItems = items.filter((it) => it.source === 'EXCEL');
@@ -322,28 +350,46 @@ const Views = {
         </div>
       </div>
 
-      <section class="dashboard-hero">
-        <div class="hero-date">${ICONS.today} ${formatKoreanDate(today)}</div>
-        <h2>안전한 현장,<br>차곡차곡 쌓이는 기록.</h2>
-        <p>오늘도 빈틈없이, 이번 주 점검을 확인하세요.</p>
-        <button class="hero-link" data-href="/calendar">이번 주 일정 보기 ${ICONS.chevronR}</button>
-        <svg class="hero-art" aria-hidden="true" viewBox="0 0 120 150" fill="none"><rect x="24" y="22" width="77" height="109" rx="13" stroke="currentColor" stroke-width="2"/><rect x="43" y="15" width="39" height="15" rx="6" fill="#234d51" stroke="currentColor" stroke-width="2"/><path d="m39 52 4 4 8-9M59 52h26m-46 24 4 4 8-9m8 5h26m-46 24 4 4 8-9m8 5h18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="95" cy="119" r="22" fill="#bde7d5"/><path d="m84 119 7 7 14-15" stroke="#234d51" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <section class="card week-hero" data-href="/calendar" style="padding:20px;margin-bottom:26px;border-radius:23px;cursor:pointer;">
+        <div style="display:flex;align-items:center;font-size:12px;font-weight:700;color:var(--text-soft);">
+          이번 주 점검
+          <span style="margin-left:auto;font-weight:500;">${weekRangeLabel}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:20px;margin-top:14px;">
+          <div style="position:relative;width:104px;height:104px;flex-shrink:0;">
+            <svg width="104" height="104" viewBox="0 0 104 104" role="img" aria-label="이번 주 ${weekItems.length}건 중 완료 ${weekDone}건">
+              <circle cx="52" cy="52" r="43" fill="none" stroke="var(--blue-bg)" stroke-width="10"/>
+              <circle cx="52" cy="52" r="43" fill="none" stroke="var(--blue)" stroke-width="10" stroke-linecap="round" stroke-dasharray="270.2" stroke-dashoffset="${ringOffset}" transform="rotate(-90 52 52)"/>
+            </svg>
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+              <span style="font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;">${weekPct}%</span>
+              <span style="margin-top:3px;font-size:11px;color:var(--text-soft);">완료율</span>
+            </div>
+          </div>
+          <div style="min-width:0;flex:1;">
+            <div style="font-size:13px;color:var(--text-soft);">완료한 점검</div>
+            <div style="margin-top:2px;font-size:30px;font-weight:700;letter-spacing:-.04em;font-variant-numeric:tabular-nums;">${weekDone}<span style="font-size:16px;font-weight:500;color:var(--text-soft);"> / ${weekItems.length}건</span></div>
+            <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;">
+              ${pillHtml(`예정 ${weekScheduled}`, statusColor('예정'))}${pillHtml(`조치중 ${weekFollowup}`, statusColor('조치중'))}
+            </div>
+          </div>
+        </div>
+        <div style="height:1px;background:var(--border-soft);margin:18px 0 14px;"></div>
+        <div style="display:flex;align-items:center;margin-bottom:10px;">
+          <span style="font-size:12px;font-weight:700;">요일별 일정</span>
+          <span style="margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-soft);"><i style="width:8px;height:8px;border-radius:2px;background:var(--blue);display:block;"></i>완료<i style="width:8px;height:8px;border-radius:2px;background:#b9d8d2;display:block;margin-left:6px;"></i>남음</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end;height:92px;">${dayBars}</div>
       </section>
 
       ${teamFilterBadge(activeTeams)}
       <div class="section-title summary-heading"><span>한눈에 보는 현황</span><span class="section-caption">오늘 기준</span></div>
       <div class="summary-grid">
-        <div class="summary-card" data-href="/calendar" style="cursor:pointer;">
-          <div class="label"><span class="metric-icon">${ICONS.today}</span>7일 안에 예정</div><div class="value" style="color:var(--blue);">${upcoming.length}<small>건</small></div>
-        </div>
         <div class="summary-card" data-href="/data?kind=all" style="cursor:pointer;">
           <div class="label"><span class="metric-icon">${ICONS.clock}</span>진행·조치 중</div><div class="value" style="color:var(--orange);">${followups.length}<small>건</small></div>
         </div>
         <div class="summary-card" data-href="/data?kind=all&q=${encodeURIComponent('조치중')}" style="cursor:pointer;">
           <div class="label"><span class="metric-icon">${ICONS.clock}</span>조치 지연</div><div class="value" style="color:var(--red);">${delayed.length}<small>건</small></div>
-        </div>
-        <div class="summary-card" data-href="/sites" style="cursor:pointer;">
-          <div class="label"><span class="metric-icon">${ICONS.site}</span>등록 현장</div><div class="value">${sites.length}<small>곳</small></div>
         </div>
       </div>
 
