@@ -21,7 +21,7 @@ const ICONS = {
   etc: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>',
 };
 
-const ADD_BTN = `<button class="icon-btn icon-btn-accent" data-action="open-add-choice" style="background:var(--blue);">${ICONS.plusSmall}</button>`;
+const ADD_BTN = `<button class="icon-btn icon-btn-accent" data-action="open-add-choice" aria-label="일정 추가" style="background:var(--blue);">${ICONS.plusSmall}</button>`;
 
 function pillHtml(label, color, extra = '') {
   return `<span class="pill" style="background:${color.bg};color:${color.fg};${extra}">${escapeHtml(label)}</span>`;
@@ -268,7 +268,7 @@ function progressPercent(rate) {
 }
 
 async function siteLatestProgress(cwsId) {
-  const items = (await DB.scheduleBySite(cwsId)).filter((it) => it.progressRate != null);
+  const items = (await DB.scheduleBySite(cwsId)).filter((it) => it.progressRate != null && it.date);
   if (!items.length) return null;
   items.sort((a, b) => b.date.localeCompare(a.date));
   return progressPercent(items[0].progressRate);
@@ -429,8 +429,12 @@ const Views = {
     const { start, end } = monthRange(year, month);
     const monthItems = await DB.scheduleInRange(start, end);
     const items = filterByTeam(monthItems, activeTeams);
-    const firstTypeByDate = {};
-    items.forEach((it) => { if (!firstTypeByDate[it.date]) firstTypeByDate[it.date] = it.inspectionType; });
+    // 날짜별로 점검구분을 중복 없이 최대 3개까지 모아 점으로 표시한다.
+    const typesByDate = {};
+    items.forEach((it) => {
+      const list = typesByDate[it.date] || (typesByDate[it.date] = []);
+      if (list.length < 3 && !list.includes(it.inspectionType)) list.push(it.inspectionType);
+    });
     // 그 날짜에 있는 일정 중 가장 심각한 지연 단계(경고 > 주의)를 골라 날짜 테두리색으로 쓴다.
     const worstTierByDate = {};
     items.forEach((it) => {
@@ -453,8 +457,7 @@ const Views = {
       const dateStr = `${year}-${pad2(month + 1)}-${pad2(d)}`;
       const isToday = dateStr === todayStr();
       const isSelected = dateStr === selected;
-      const t = firstTypeByDate[dateStr];
-      const dotColor = t ? typeColor(t).fg : 'transparent';
+      const dots = (typesByDate[dateStr] || []).map((t) => `<i style="width:4px;height:4px;border-radius:50%;background:${typeColor(t).fg};"></i>`).join('');
       const tier = worstTierByDate[dateStr];
       const ringColor = tier === 'danger' ? 'var(--red)' : tier === 'warn' ? 'var(--orange)' : 'transparent';
       const weekday = new Date(year, month, d).getDay();
@@ -464,7 +467,7 @@ const Views = {
         <div data-href="/calendar?date=${dateStr}&month=${year}-${pad2(month + 1)}" style="text-align:center;padding:4px 0;cursor:pointer;">
           <div style="width:30px;height:30px;line-height:30px;border-radius:50%;margin:0 auto;font-size:13.5px;font-weight:${isSelected ? 800 : 500};color:${numColor};background:${circleBg};box-shadow:inset 0 0 0 2px ${ringColor};position:relative;">
             ${d}
-            ${t ? `<i style="position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);width:4px;height:4px;border-radius:50%;background:${dotColor};"></i>` : ''}
+            ${dots ? `<span style="position:absolute;bottom:-1px;left:0;right:0;display:flex;justify-content:center;gap:2px;line-height:0;">${dots}</span>` : ''}
           </div>
         </div>`;
     }
@@ -491,8 +494,8 @@ const Views = {
       <div style="display:flex;align-items:center;margin-bottom:8px;">
         <span style="font-size:17px;font-weight:800;">${year}년 ${month + 1}월</span>
         <div style="margin-left:auto;display:flex;gap:6px;">
-          <button class="icon-btn" style="width:28px;height:28px;" data-href="/calendar?date=${selected}&month=${prevMonth}">${ICONS.chevronL}</button>
-          <button class="icon-btn" style="width:28px;height:28px;" data-href="/calendar?date=${selected}&month=${nextMonth}">${ICONS.chevronR}</button>
+          <button class="icon-btn" style="width:28px;height:28px;" data-href="/calendar?date=${selected}&month=${prevMonth}" aria-label="이전 달">${ICONS.chevronL}</button>
+          <button class="icon-btn" style="width:28px;height:28px;" data-href="/calendar?date=${selected}&month=${nextMonth}" aria-label="다음 달">${ICONS.chevronR}</button>
         </div>
       </div>
       ${await teamChipsHtml(activeTeams, monthItems)}
@@ -622,7 +625,7 @@ const Views = {
   async renderSiteInfo(cwsId) {
     const site = await DB.getSite(cwsId);
     if (!site) return `<div class="empty-state"><h3>현장을 찾을 수 없습니다</h3></div>`;
-    const items = (await DB.scheduleBySite(cwsId)).sort((a, b) => b.date.localeCompare(a.date));
+    const items = (await DB.scheduleBySite(cwsId)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     const progress = await siteLatestProgress(cwsId);
 
     let ddayLabel = '';
@@ -657,9 +660,9 @@ const Views = {
     return `
       <div class="topbar">
         <div class="topbar-row">
-          <button class="icon-btn" data-href="back">${ICONS.back}</button>
+          <button class="icon-btn" data-href="back" aria-label="뒤로">${ICONS.back}</button>
           <span style="font-size:15px;font-weight:700;">현장 상세</span>
-          <button class="icon-btn" style="margin-left:auto;" data-href="/site-edit/${encodeURIComponent(site.cwsId)}">✎</button>
+          <button class="icon-btn" style="margin-left:auto;" data-href="/site-edit/${encodeURIComponent(site.cwsId)}" aria-label="현장 정보 수정">✎</button>
         </div>
       </div>
       <div>
@@ -747,7 +750,7 @@ const Views = {
     return `
       <div class="topbar">
         <div class="topbar-row">
-          <button class="icon-btn" data-href="back">${ICONS.back}</button>
+          <button class="icon-btn" data-href="back" aria-label="뒤로">${ICONS.back}</button>
           <span style="font-size:15px;font-weight:700;">일정 상세</span>
         </div>
       </div>
@@ -1061,7 +1064,7 @@ const Views = {
     const header = `
       <div class="topbar">
         <div class="topbar-row">
-          <button class="icon-btn" data-href="back">${ICONS.back}</button>
+          <button class="icon-btn" data-href="back" aria-label="뒤로">${ICONS.back}</button>
           <span style="font-size:15px;font-weight:700;">저장된 데이터</span>
           ${countPill(list.length, { bg: 'var(--blue-bg)', fg: 'var(--blue-dark)' })}
         </div>
@@ -1129,7 +1132,7 @@ const Views = {
       const r = window._lastImportResult;
       window._lastImportResult = null;
       return `
-        <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/data">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 넣기</span></div></div>
+        <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/data" aria-label="뒤로">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 넣기</span></div></div>
         <div class="card" style="padding:16px;margin-bottom:14px;">
           <div style="font-size:14px;font-weight:800;margin-bottom:10px;">가져오기 결과</div>
           <div style="display:flex;flex-direction:column;gap:8px;font-size:13.5px;">
@@ -1184,7 +1187,7 @@ const Views = {
     }
 
     return `
-      <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/data">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 넣기</span></div></div>
+      <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/data" aria-label="뒤로">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 넣기</span></div></div>
       <div style="border:1.5px dashed var(--border);border-radius:16px;padding:36px 20px;text-align:center;margin-bottom:20px;">
         <div style="font-size:15px;font-weight:700;margin-bottom:6px;">점검계획 또는 현장 마스터 엑셀 선택</div>
         <div style="font-size:12.5px;color:var(--text-soft);margin-bottom:16px;">.xlsx, .xls 파일을 지원합니다. 파일 하나로 자동 구분해서 처리합니다.</div>
@@ -1197,7 +1200,7 @@ const Views = {
     const wkStart = startOfWeek(todayStr());
     const wkEnd = addDays(wkStart, 6);
     return `
-      <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/settings">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 내보내기</span></div></div>
+      <div class="topbar"><div class="topbar-row"><button class="icon-btn" data-href="/settings" aria-label="뒤로">${ICONS.back}</button><span style="font-size:15px;font-weight:700;">엑셀로 내보내기</span></div></div>
       <div class="field-label">기간</div>
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <button class="chip" data-action="set-range" data-start="${wkStart}" data-end="${wkEnd}" style="flex:1;justify-content:center;">이번 주</button>

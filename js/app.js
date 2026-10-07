@@ -75,7 +75,7 @@ function hueForTeam(team) {
 
 // 조치중 상태가 이어진 일수로 지연 단계를 매긴다: 7일 초과 주의, 10일 초과 경고.
 function overdueDays(item) {
-  if (item.status !== '조치중') return 0;
+  if (item.status !== '조치중' || !item.date) return 0;
   return Math.floor((new Date(todayStr()) - new Date(item.date)) / 86400000);
 }
 function overdueTier(item) {
@@ -213,6 +213,40 @@ async function render() {
   void main.offsetWidth; // 리플로우를 강제해 매번 애니메이션이 다시 시작되게 함
   main.classList.add('page-anim');
   if (Views.afterRender) Views.afterRender(path);
+  makeClickablesAccessible();
+  restoreFocus();
+}
+
+// 클릭용 div/span(data-href, data-action 등)을 키보드·스크린리더에서도 버튼으로 쓸 수 있게 한다.
+function makeClickablesAccessible() {
+  document.querySelectorAll('[data-href], [data-action], #f-type-chips .chip').forEach((el) => {
+    if (el.id === 'sheet-overlay' || el.matches('button, input, textarea, select, a, label')) return;
+    if (!el.hasAttribute('role')) el.setAttribute('role', 'button');
+    if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
+  });
+}
+
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"]:not(button)')) {
+    e.preventDefault();
+    e.target.click();
+  }
+});
+
+// 검색창 입력으로 화면이 다시 그려지면 입력창이 새로 만들어져 포커스를 잃으므로, 렌더 직후 되돌려 놓는다.
+let refocusId = null;
+function navigateKeepFocus(inputId, hash) {
+  if (hash === location.hash) return;
+  refocusId = inputId;
+  location.hash = hash;
+}
+function restoreFocus() {
+  if (!refocusId) return;
+  const el = document.getElementById(refocusId);
+  refocusId = null;
+  if (!el) return;
+  el.focus();
+  el.setSelectionRange(el.value.length, el.value.length);
 }
 
 window.addEventListener('hashchange', render);
@@ -222,7 +256,7 @@ document.addEventListener('click', async (e) => {
   const link = e.target.closest('[data-href]');
   if (link) {
     const href = link.dataset.href;
-    if (href === 'back') history.back();
+    if (href === 'back') { if (history.length > 1) history.back(); else location.hash = '#/today'; }
     else location.hash = '#' + href;
     return;
   }
@@ -405,13 +439,13 @@ document.addEventListener('input', (e) => {
       if (params.get('start')) qs.set('start', params.get('start'));
       if (params.get('end')) qs.set('end', params.get('end'));
       if (e.target.value) qs.set('q', e.target.value);
-      location.hash = '#/sites' + (qs.toString() ? '?' + qs.toString() : '');
+      navigateKeepFocus('site-q', '#/sites' + (qs.toString() ? '?' + qs.toString() : ''));
     }, 250);
   } else if (e.target.id === 'data-q') {
     clearTimeout(window._dataQDebounce);
     const kind = e.target.dataset.kind || 'excel';
     window._dataQDebounce = setTimeout(() => {
-      location.hash = `#/data?kind=${kind}&q=${encodeURIComponent(e.target.value)}`;
+      navigateKeepFocus('data-q', `#/data?kind=${kind}&q=${encodeURIComponent(e.target.value)}`);
     }, 250);
   }
 });
